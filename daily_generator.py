@@ -172,14 +172,15 @@ def save_to_notion(posts: list[dict]) -> int:
 
 
 def send_line_notification(count: int):
-    token = os.environ.get("LINE_NOTIFY_TOKEN", "")
-    if not token:
-        print("  LINE_NOTIFY_TOKEN未設定のためスキップ")
+    token   = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    user_id = os.environ.get("LINE_USER_ID", "")
+    if not token or not user_id:
+        print("  LINE設定未完了のためスキップ")
         return
 
     now = datetime.now(JST)
-    message = (
-        f"\n📱 今日のSNS投稿案 {count}件が届きました！\n\n"
+    text = (
+        f"📱 今日のSNS投稿案 {count}件が届きました！\n\n"
         f"📅 {now.strftime('%Y年%m月%d日')}\n\n"
         "Notionで内容を確認してください👇\n"
         "✅ 投稿したい → ステータスを「未投稿」に変更\n"
@@ -189,9 +190,15 @@ def send_line_notification(count: int):
 
     try:
         r = requests.post(
-            "https://notify-api.line.me/api/notify",
-            headers={"Authorization": f"Bearer {token}"},
-            data={"message": message},
+            "https://api.line.me/v2/bot/message/push",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "to": user_id,
+                "messages": [{"type": "text", "text": text}],
+            },
             timeout=10,
         )
         r.raise_for_status()
