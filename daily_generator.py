@@ -4,7 +4,7 @@
 2. X APIでトレンド投稿を検索
 3. Claude AIで投稿文を5件生成
 4. Notionに「承認待ち」で保存
-5. LINE Notifyで通知
+5. LINE Messaging APIで通知
 """
 
 import os
@@ -160,7 +160,6 @@ def save_to_notion(posts: list[dict]) -> int:
                     },
                     PROP_STATUS: {
                         "multi_select": [{"name": STATUS_PENDING_APPROVAL}]
-                    },
                     },
                 },
             )
