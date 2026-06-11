@@ -156,10 +156,11 @@ def save_to_notion(posts: list[dict]) -> int:
                         "date": {"start": post_dt.isoformat()}
                     },
                     PROP_PLATFORM: {
-                        "select": {"name": PLATFORM_BOTH}
+                        "multi_select": [{"name": PLATFORM_BOTH}]
                     },
                     PROP_STATUS: {
-                        "select": {"name": STATUS_PENDING_APPROVAL}
+                        "multi_select": [{"name": STATUS_PENDING_APPROVAL}]
+                    },
                     },
                 },
             )
