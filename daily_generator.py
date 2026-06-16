@@ -1,3 +1,12 @@
+"""
+毎朝自動実行：
+1. RSSフィードからAI/マーケ/SNSニュース収集
+2. X APIでトレンド投稿を検索
+3. Claude AIで投稿文を5件生成
+4. Notionに「承認待ち」で保存
+5. LINE Notifyで通知
+"""
+
 import os
 import sys
 import json
@@ -12,14 +21,18 @@ from dotenv import load_dotenv
 load_dotenv()
 
 JST = timezone(timedelta(hours=9))
+
 NOTION_TOKEN       = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+
 PROP_TEXT     = "投稿文"
 PROP_DATETIME = "投稿日時"
 PROP_PLATFORM = "媒体"
 PROP_STATUS   = "ステータス"
+
 STATUS_PENDING_APPROVAL = "承認待ち"
 PLATFORM_BOTH = "両方"
+
 RSS_FEEDS = [
     "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",
     "https://www.publickey1.jp/atom.xml",
@@ -27,11 +40,13 @@ RSS_FEEDS = [
     "https://blog.hubspot.com/marketing/rss.xml",
     "https://buffer.com/resources/feed/",
 ]
+
 X_KEYWORDS = ["AI活用", "ChatGPT", "SNS運用", "WEBマーケティング"]
+
 POST_TIMES_JST = ["09:00", "12:00", "18:00", "20:00", "22:00"]
 
 
-def fetch_rss_news(max_items=12):
+def fetch_rss_news(max_items: int = 12) -> list[str]:
     items = []
     for url in RSS_FEEDS:
         try:
@@ -41,11 +56,11 @@ def fetch_rss_news(max_items=12):
                 if title:
                     items.append(title)
         except Exception as e:
-            print(f"  RSS取得スキップ: {e}")
+            print(f"  RSS取得スキップ ({url}): {e}")
     return items[:max_items]
 
 
-def fetch_trending_tweets(max_tweets=6):
+def fetch_trending_tweets(max_tweets: int = 6) -> list[str]:
     try:
         client = tweepy.Client(
             consumer_key=os.environ["X_API_KEY"],
@@ -71,105 +86,118 @@ def fetch_trending_tweets(max_tweets=6):
         return []
 
 
-def generate_posts_with_claude(news_items, trending, count=5):
+def generate_posts_with_claude(news_items: list[str], trending: list[str], count: int = 5) -> list[dict]:
     ai_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
     news_text  = "\n".join(f"・{item}" for item in news_items) or "（情報なし）"
     trend_text = "\n".join(f"・{t}" for t in trending) or "（情報なし）"
-    practical_count = count - 2
+    type_a_count = count - 2
 
-    あなたはフォロワーから「わかりやすい」「刺さる」と言われる人気SNSライターです。
-以下のニュースとトレンドをヒントに、一般の人が思わず「いいね」や「保存」したくなる投稿を{count}件作成してください。
-
-【参考ニュース】
-{news_text}
-
-【参考トレンド】
-{trend_text}
-
-【投稿の種類と配分】
-A. 気づき・メタ認知型（{count - 2}件）
-   - 「実はみんな無意識にやってること」を言語化する
-   - 「あ、これ自分のことだ」と思わせる自己認識フック
-   - 難しい概念を日常の場面に置き換えて説明
-   - 書き出しパターン例：
-     「なぜか○○してしまう人の特徴」
-     「○○できない本当の理由は○○じゃなくて○○だった」
-     「みんな○○と思ってるけど、実は逆」
-
-B. 個人の本音・共感型（2件）
-   - 自分が実際に感じた違和感・気づき・失敗
-   - 「わかる〜」「言語化してくれてありがとう」と思わせる内容
-   - 専門家っぽくなく、友達に話すような口調
-   - 書き出しパターン例：
-     「正直に言うと〜」
-     「最近ずっと気になってること」
-     「これ言うと怒られそうだけど〜」
-
-【文字数・形式】
-- 各投稿200〜400文字
-- 専門用語は使わない（使うなら必ず日常語で言い換える）
-- 絵文字は1〜2個、押しつけがましくない使い方
-- ハッシュタグは1個まで（なくてもOK）
-- 最後に問いかけや余韻を残す
-
-【禁止】
-- カタカナ専門用語の羅列（DX、メタバース、ペルソナ など単独使用）
-- 「〜しましょう」「〜が重要です」など上から目線
-- 箇条書きで終わる投稿
-- 「まとめると」で始まる締め方
-
-以下のJSON形式のみを出力してください（説明文不要）：
+    prompt = (
+        f"あなたはフォロワーから「わかりやすい」「刺さる」と言われる人気SNSライターです。\n"
+        f"以下のニュースとトレンドをヒントに、一般の人が思わず「いいね」や「保存」したくなる投稿を{count}件作成してください。\n\n"
+        f"【参考ニュース】\n{news_text}\n\n"
+        f"【参考トレンド】\n{trend_text}\n\n"
+        f"【投稿の種類と配分】\n"
+        f"A. 気づき・メタ認知型（{type_a_count}件）\n"
+        "   - 「実はみんな無意識にやってること」を言語化する\n"
+        "   - 「あ、これ自分のことだ」と思わせる自己認識フック\n"
+        "   - 難しい概念を日常の場面に置き換えて説明\n"
+        "   - 書き出しパターン例：\n"
+        "     「なぜか○○してしまう人の特徴」\n"
+        "     「○○できない本当の理由は○○じゃなくて○○だった」\n"
+        "     「みんな○○と思ってるけど、実は逆」\n\n"
+        "B. 個人の本音・共感型（2件）\n"
+        "   - 自分が実際に感じた違和感・気づき・失敗\n"
+        "   - 「わかる〜」「言語化してくれてありがとう」と思わせる内容\n"
+        "   - 専門家っぽくなく、友達に話すような口調\n"
+        "   - 書き出しパターン例：\n"
+        "     「正直に言うと〜」\n"
+        "     「最近ずっと気になってること」\n"
+        "     「これ言うと怒られそうだけど〜」\n\n"
+        "【文字数・形式】\n"
+        "- 各投稿200〜400文字\n"
+        "- 専門用語は使わない（使うなら必ず日常語で言い換える）\n"
+        "- 絵文字は1〜2個、押しつけがましくない使い方\n"
+        "- ハッシュタグは1個まで（なくてもOK）\n"
+        "- 最後に問いかけや余韻を残す\n\n"
+        "【禁止】\n"
+        "- カタカナ専門用語の羅列（DX、メタバース、ペルソナ など単独使用）\n"
+        "- 「〜しましょう」「〜が重要です」など上から目線\n"
+        "- 箇条書きで終わる投稿\n"
+        "- 「まとめると」で始まる締め方\n\n"
+        "以下のJSON形式のみを出力してください（説明文不要）：\n"
+        "[\n"
+        '  {"text": "投稿文1", "type": "気づき", "theme": "テーマ"},\n'
+        '  {"text": "投稿文2", "type": "共感", "theme": "テーマ"}\n'
+        "]"
+    )
 
     message = ai_client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=4000,
         messages=[{"role": "user", "content": prompt}],
     )
+
     raw = message.content[0].text.strip()
     if "```json" in raw:
         raw = raw.split("```json")[1].split("```")[0].strip()
     elif "```" in raw:
         raw = raw.split("```")[1].split("```")[0].strip()
+
     try:
         return json.loads(raw)
     except Exception as e:
         print(f"  JSON解析エラー: {e}")
+        print(f"  Claude出力: {raw[:200]}")
         return []
 
 
-def save_to_notion(posts):
+def save_to_notion(posts: list[dict]) -> int:
     notion = Client(auth=NOTION_TOKEN)
     now    = datetime.now(JST)
     saved  = 0
+
     for i, post in enumerate(posts):
         time_str = POST_TIMES_JST[i % len(POST_TIMES_JST)]
         hour, minute = map(int, time_str.split(":"))
         post_dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if post_dt <= now:
             post_dt += timedelta(days=1)
+
         try:
             notion.pages.create(
                 parent={"database_id": NOTION_DATABASE_ID},
                 properties={
-                    PROP_TEXT: {"title": [{"text": {"content": post["text"]}}]},
-                    PROP_DATETIME: {"date": {"start": post_dt.isoformat()}},
-                    PROP_PLATFORM: {"multi_select": [{"name": PLATFORM_BOTH}]},
-                    PROP_STATUS: {"multi_select": [{"name": STATUS_PENDING_APPROVAL}]},
+                    PROP_TEXT: {
+                        "title": [{"text": {"content": post["text"]}}]
+                    },
+                    PROP_DATETIME: {
+                        "date": {"start": post_dt.isoformat()}
+                    },
+                    PROP_PLATFORM: {
+                        "multi_select": [{"name": PLATFORM_BOTH}]
+                    },
+                    PROP_STATUS: {
+                        "multi_select": [{"name": STATUS_PENDING_APPROVAL}]
+                    },
                 },
             )
             print(f"  保存: {post['text'][:40]}...")
             saved += 1
         except Exception as e:
             print(f"  Notion保存エラー: {e}")
+
     return saved
 
 
-def send_line_notification(count):
+def send_line_notification(count: int):
     token   = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     user_id = os.environ.get("LINE_USER_ID", "")
     if not token or not user_id:
         print("  LINE設定未完了のためスキップ")
         return
+
     now = datetime.now(JST)
     text = (
         f"📱 今日のSNS投稿案 {count}件が届きました！\n\n"
@@ -179,11 +207,18 @@ def send_line_notification(count):
         "❌ 投稿しない → ステータスを「却下」に変更\n\n"
         "承認した投稿は自動で配信されます！"
     )
+
     try:
         r = requests.post(
             "https://api.line.me/v2/bot/message/push",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={"to": user_id, "messages": [{"type": "text", "text": text}]},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "to": user_id,
+                "messages": [{"type": "text", "text": text}],
+            },
             timeout=10,
         )
         r.raise_for_status()
@@ -195,23 +230,30 @@ def send_line_notification(count):
 def run():
     now = datetime.now(JST)
     print(f"[{now.strftime('%Y-%m-%d %H:%M')} JST] 投稿生成開始")
+
     print("ニュース収集中...")
     news = fetch_rss_news()
     print(f"  RSS: {len(news)}件")
+
     print("トレンド投稿検索中...")
     trending = fetch_trending_tweets()
     print(f"  Xトレンド: {len(trending)}件")
+
     print("Claude AIで投稿文生成中...")
     posts = generate_posts_with_claude(news, trending, count=5)
     print(f"  生成: {len(posts)}件")
+
     if not posts:
         print("投稿の生成に失敗しました", file=sys.stderr)
         sys.exit(1)
+
     print("Notionに保存中...")
     saved = save_to_notion(posts)
     print(f"  保存: {saved}件")
+
     print("LINE通知送信中...")
     send_line_notification(saved)
+
     print(f"\n完了 — {saved}件の投稿案を「承認待ち」でNotionに保存しました")
 
 
