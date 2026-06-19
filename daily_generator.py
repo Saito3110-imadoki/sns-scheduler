@@ -264,9 +264,9 @@ def generate_posts_with_claude(
         "- 最後に問いかけや余韻を残す\n\n"
         "【禁止】カタカナ専門用語の羅列・上から目線・箇条書き終わり\n\n"
         "【図解生成ルール】\n"
-        "投稿文に具体的な数字・割合・統計・定量的なビフォーアフター比較が含まれる場合のみ\n"
-        "needs_image: true とし、chart フィールドを追加してください。\n"
-        "それ以外は needs_image: false とし、chart フィールドは省略してください。\n\n"
+        "投稿文の中に具体的な数字（○○件、○○%、○○倍、○○万円、○○人 など）が\n"
+"1つでも含まれていれば needs_image: true にしてください。\n"
+"数字が一切ない投稿のみ needs_image: false とし、chart フィールドは省略してください。\n\n"
         "chart フォーマット（chart_type に応じて1つ選択）:\n\n"
         "① bar（棒グラフ）: 複数の数値を並べて比較\n"
         '   {"chart_type":"bar","title":"グラフタイトル","subtitle":"補足（任意）",'
