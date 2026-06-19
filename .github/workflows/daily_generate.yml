@@ -9,9 +9,14 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: 日本語フォントのインストール
+        run: sudo apt-get install -y fonts-noto-cjk -q
 
       - name: Python セットアップ
         uses: actions/setup-python@v5
@@ -25,13 +30,22 @@ jobs:
 
       - name: 投稿生成スクリプト実行
         env:
-          NOTION_TOKEN:           ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID:     ${{ secrets.NOTION_DATABASE_ID }}
-          X_API_KEY:              ${{ secrets.X_API_KEY }}
-          X_API_KEY_SECRET:       ${{ secrets.X_API_KEY_SECRET }}
-          X_ACCESS_TOKEN:         ${{ secrets.X_ACCESS_TOKEN }}
-          X_ACCESS_TOKEN_SECRET:  ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-          ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
-          LINE_CHANNEL_ACCESS_TOKEN:   ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          LINE_USER_ID:                ${{ secrets.LINE_USER_ID }}
+          NOTION_TOKEN:               ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID:         ${{ secrets.NOTION_DATABASE_ID }}
+          X_API_KEY:                  ${{ secrets.X_API_KEY }}
+          X_API_KEY_SECRET:           ${{ secrets.X_API_KEY_SECRET }}
+          X_ACCESS_TOKEN:             ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET:      ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          ANTHROPIC_API_KEY:          ${{ secrets.ANTHROPIC_API_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN:  ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID:               ${{ secrets.LINE_USER_ID }}
+          GITHUB_REPOSITORY:          ${{ github.repository }}
         run: python daily_generator.py
+
+      - name: 生成した画像をリポジトリにコミット
+        run: |
+          git config user.name  "SNS Scheduler Bot"
+          git config user.email "bot@github.com"
+          git add post-images/ 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "Add post images $(date +%Y-%m-%d)"
+          git push || true
