@@ -408,8 +408,8 @@ def run():
         ok = generate_chart_image(post["chart"], out_path)
         if ok:
             if GITHUB_REPOSITORY:
-                url = (f"https://raw.githubusercontent.com/"
-                       f"{GITHUB_REPOSITORY}/main/post-images/{filename}")
+                owner, repo = GITHUB_REPOSITORY.split("/", 1)
+url = (f"https://{owner}.github.io/{repo}/post-images/{filename}")
             else:
                 url = str(out_path)
             image_urls[i] = url
