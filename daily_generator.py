@@ -265,8 +265,8 @@ def generate_posts_with_claude(
         "【禁止】カタカナ専門用語の羅列・上から目線・箇条書き終わり\n\n"
         "【図解生成ルール】\n"
         "投稿文の中に具体的な数字（○○件、○○%、○○倍、○○万円、○○人 など）が\n"
-"1つでも含まれていれば needs_image: true にしてください。\n"
-"数字が一切ない投稿のみ needs_image: false とし、chart フィールドは省略してください。\n\n"
+        "1つでも含まれていれば needs_image: true にしてください。\n"
+        "数字が一切ない投稿のみ needs_image: false とし、chart フィールドは省略してください。\n\n"
         "chart フォーマット（chart_type に応じて1つ選択）:\n\n"
         "① bar（棒グラフ）: 複数の数値を並べて比較\n"
         '   {"chart_type":"bar","title":"グラフタイトル","subtitle":"補足（任意）",'
@@ -409,7 +409,7 @@ def run():
         if ok:
             if GITHUB_REPOSITORY:
                 owner, repo = GITHUB_REPOSITORY.split("/", 1)
-url = (f"https://{owner}.github.io/{repo}/post-images/{filename}")
+                url = f"https://{owner}.github.io/{repo}/post-images/{filename}"
             else:
                 url = str(out_path)
             image_urls[i] = url
