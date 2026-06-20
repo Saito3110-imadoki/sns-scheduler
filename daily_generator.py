@@ -7,7 +7,18 @@
 5. Notionに「承認待ち」で保存（画像URLも記録）
 6. LINE Notifyで通知
 """
+import sys
+from pathlib import Path
 
+# playwright版インフォグラフィック（利用可能な場合に優先使用）
+_SCRIPT_DIR = Path(__file__).parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+try:
+    from infographic import generate_infographic as _gen_web
+    _HAS_WEB_RENDERER = True
+except Exception:
+    _HAS_WEB_RENDERER = False
 import os
 import sys
 import json
