@@ -28,6 +28,9 @@ jobs:
       - name: 依存ライブラリのインストール
         run: pip install -r requirements.txt
 
+      - name: Playwright Chromium インストール
+        run: playwright install chromium --with-deps
+
       - name: 投稿生成スクリプト実行
         env:
           NOTION_TOKEN:               ${{ secrets.NOTION_TOKEN }}
