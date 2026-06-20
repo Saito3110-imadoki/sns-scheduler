@@ -416,7 +416,13 @@ def run():
         filename = f"{date_str}-{i+1}.png"
         out_path = IMAGE_DIR / filename
         print(f"  画像生成中 [{i+1}]: {post.get('theme', '')}")
-        ok = generate_chart_image(post["chart"], out_path)
+        # playwright優先、失敗時はmatplotlibにフォールバック
+ok = (_HAS_WEB_RENDERER and _gen_web(post["chart"], out_path)) \
+     or generate_chart_image(post["chart"], out_path)
+if _HAS_WEB_RENDERER and ok:
+    print("    レンダラー: playwright (高解像度)")
+elif ok:
+    print("    レンダラー: matplotlib (フォールバック)")
         if ok:
             if GITHUB_REPOSITORY:
                 owner, repo = GITHUB_REPOSITORY.split("/", 1)
