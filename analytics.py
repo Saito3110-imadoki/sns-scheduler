@@ -56,11 +56,9 @@ PROP_TWEET_ID      = _cfg("notion", "properties", "tweet_id",      default="X投
 PROP_THREADS_ID    = _cfg("notion", "properties", "threads_post_id", default="Threads投稿ID")
 PROP_LIKES         = _cfg("notion", "properties", "likes",         default="いいね数")
 PROP_RETWEETS      = _cfg("notion", "properties", "retweets",      default="RT数")
-PROP_REPLIES       = _cfg("notion", "properties", "replies",       default="リプライ数")
 PROP_IMPRESSIONS   = _cfg("notion", "properties", "impressions",   default="インプレッション")
 PROP_THREADS_LIKES = _cfg("notion", "properties", "threads_likes", default="Threadsいいね数")
 PROP_THREADS_VIEWS = _cfg("notion", "properties", "threads_views", default="Threads閲覧数")
-PROP_ANALYTICS_DT  = _cfg("notion", "properties", "analytics_date", default="計測日時")
 
 STATUS_DONE = "投稿済"
 
@@ -317,20 +315,19 @@ def run():
         print(f"  取得成功: {len(metrics_map)} 件")
         for tweet_id, metrics in metrics_map.items():
             page_id = x_targets[tweet_id]["id"]
-            props: dict = {PROP_ANALYTICS_DT: {"date": {"start": now.isoformat()}}}
+            props: dict = {}
             if "like_count" in metrics:
                 props[PROP_LIKES] = {"number": metrics["like_count"]}
             if "retweet_count" in metrics:
                 props[PROP_RETWEETS] = {"number": metrics["retweet_count"]}
-            if "reply_count" in metrics:
-                props[PROP_REPLIES] = {"number": metrics["reply_count"]}
             if "impression_count" in metrics:
                 props[PROP_IMPRESSIONS] = {"number": metrics["impression_count"]}
+            if not props:
+                continue
             try:
                 update_page_props(notion, page_id, props,
                                   optional=[PROP_LIKES, PROP_RETWEETS,
-                                            PROP_REPLIES, PROP_IMPRESSIONS,
-                                            PROP_ANALYTICS_DT])
+                                            PROP_IMPRESSIONS])
                 print(f"  X更新: {tweet_id} → いいね {metrics.get('like_count','-')}"
                       f" / RT {metrics.get('retweet_count','-')}"
                       f" / imp {metrics.get('impression_count','-')}")
@@ -345,16 +342,17 @@ def run():
             insights = fetch_threads_media_insights(threads_id)
             if not insights:
                 continue
-            props = {PROP_ANALYTICS_DT: {"date": {"start": now.isoformat()}}}
+            props = {}
             if "likes" in insights:
                 props[PROP_THREADS_LIKES] = {"number": insights["likes"]}
             if "views" in insights:
                 props[PROP_THREADS_VIEWS] = {"number": insights["views"]}
+            if not props:
+                continue
             try:
                 update_page_props(notion, page["id"], props,
                                   optional=[PROP_THREADS_LIKES,
-                                            PROP_THREADS_VIEWS,
-                                            PROP_ANALYTICS_DT])
+                                            PROP_THREADS_VIEWS])
                 print(f"  Threads更新: {threads_id} → いいね {insights.get('likes','-')}"
                       f" / 閲覧 {insights.get('views','-')}")
                 updated += 1
