@@ -76,6 +76,7 @@ PROP_DATETIME     = _cfg("notion", "properties", "datetime",     default="投稿
 PROP_PLATFORM     = _cfg("notion", "properties", "platform",     default="媒体")
 PROP_STATUS       = _cfg("notion", "properties", "status",       default="ステータス")
 PROP_IMAGE_URL    = _cfg("notion", "properties", "image_url",    default="画像URL")
+PROP_IMAGE_URLS   = _cfg("notion", "properties", "image_urls",   default="画像URL一覧")
 PROP_LIKES        = _cfg("notion", "properties", "likes",        default="いいね数")
 PROP_RETWEETS     = _cfg("notion", "properties", "retweets",     default="RT数")
 PROP_IMPRESSIONS  = _cfg("notion", "properties", "impressions",  default="インプレッション")
@@ -87,14 +88,14 @@ PLATFORM_BOTH           = _cfg("notion", "platform", "default", default="両方"
 GITHUB_REPOSITORY = os.environ.get("GITHUB_REPOSITORY", "")
 IMAGE_DIR = Path("post-images")
 
-# 3色ルール
-C_BASE    = '#0D1117'
-C_SURFACE = '#161B22'
-C_MAIN    = '#818CF8'
-C_ACCENT  = '#FCD34D'
-C_TEXT    = '#E2E8F0'
+# 3色ルール（白背景ライトテーマ）
+C_BASE    = '#FFFFFF'
+C_SURFACE = '#F1F5F9'
+C_MAIN    = '#4F46E5'
+C_ACCENT  = '#D97706'
+C_TEXT    = '#0F172A'
 C_MUTED   = '#64748B'
-C_BORDER  = '#30363D'
+C_BORDER  = '#E2E8F0'
 
 RSS_FEEDS = _cfg("rss_feeds", default=[
     "https://rss.itmedia.co.jp/rss/2.0/aiplus.xml",
@@ -169,7 +170,7 @@ def _draw_bar(ax, chart: dict):
 
         # 背景トラック
         ax.add_patch(FancyBboxPatch((x_start, y - bar_h / 2), bar_max, bar_h,
-            boxstyle="round,pad=0.04", lw=0, facecolor='#1A2235'))
+            boxstyle="round,pad=0.04", lw=0, facecolor='#E2E8F0'))
         # 塗り棒
         ax.add_patch(FancyBboxPatch((x_start, y - bar_h / 2), bar_w, bar_h,
             boxstyle="round,pad=0.04", lw=0, facecolor=C_MAIN))
@@ -202,7 +203,7 @@ def _draw_stat(ax, chart: dict):
         # カード背景
         ax.add_patch(FancyBboxPatch((x0, 0.75), w, 4.25,
             boxstyle="round,pad=0.15", lw=2,
-            edgecolor=C_MAIN, facecolor='#0D1B2A'))
+            edgecolor=C_MAIN, facecolor='#F8FAFC'))
 
         # 上部アクセントバー
         ax.add_patch(FancyBboxPatch((x0 + 0.08, 4.72), w - 0.16, 0.16,
@@ -234,7 +235,7 @@ def _draw_stat(ax, chart: dict):
     if impact:
         ax.add_patch(FancyBboxPatch((0.4, 0.1), 11.2, 0.52,
             boxstyle="round,pad=0.05", lw=1,
-            edgecolor='#2D2500', facecolor='#1C1400'))
+            edgecolor='#FCD34D', facecolor='#FFFBEB'))
         _t(ax, 6.0, 0.37, impact, size=10, color=C_ACCENT,
            ha='center', va='center')
 
@@ -263,7 +264,7 @@ def _draw_comparison(ax, chart: dict):
     # 右パネル
     ax.add_patch(FancyBboxPatch((7.0, 0.85), 4.7, 4.15,
         boxstyle="round,pad=0.12", lw=2,
-        edgecolor=C_MAIN, facecolor='#0D1B2A'))
+        edgecolor=C_MAIN, facecolor='#F8FAFC'))
     _t(ax, 9.35, 4.65, right_label, size=14, color=C_MAIN, bold=True, ha='center')
     ax.plot([7.3, 11.4], [4.35, 4.35], color=C_BORDER, lw=0.7)
     for i, item in enumerate(right_items[:4]):
@@ -288,12 +289,12 @@ def _draw_flow(ax, chart: dict):
         ax.add_patch(FancyBboxPatch((0.4, y - 0.28), 1.9, 0.56,
             boxstyle="round,pad=0.06", lw=0, facecolor=chip_c))
         _t(ax, 1.35, y, st.get("label", f"STEP{i+1}"), size=11,
-           color='#111111' if is_last else '#ffffff', bold=True,
+           color='#ffffff', bold=True,
            ha='center', va='center')
         # テキストボックス
         ax.add_patch(FancyBboxPatch((2.7, y - 0.32), 8.9, 0.64,
             boxstyle="round,pad=0.06", lw=1,
-            edgecolor=C_ACCENT if is_last else C_BORDER, facecolor='#0D1B2A'))
+            edgecolor=C_ACCENT if is_last else C_BORDER, facecolor='#F8FAFC'))
         _t(ax, 3.0, y, st.get("text", ""), size=10.5, color=C_TEXT, va='center')
         # 矢印
         if not is_last:
@@ -313,7 +314,7 @@ def _draw_list(ax, chart: dict):
         y = top - (i + 0.5) * row_h
         ax.add_patch(FancyBboxPatch((0.4, y - row_h / 2 + 0.08), 11.2, row_h - 0.16,
             boxstyle="round,pad=0.06", lw=1,
-            edgecolor=C_BORDER, facecolor='#0D1B2A'))
+            edgecolor=C_BORDER, facecolor='#F8FAFC'))
         # 番号
         ax.add_patch(FancyBboxPatch((0.7, y - 0.26), 0.52, 0.52,
             boxstyle="round,pad=0.05", lw=0, facecolor=C_MAIN))
@@ -341,7 +342,7 @@ def generate_chart_image(chart: dict, output_path: Path) -> bool:
 
         # ヘッダー背景
         ax.add_patch(FancyBboxPatch((0.4, 6.05), 11.2, 0.58,
-            boxstyle="round,pad=0.05", lw=0, facecolor='#161B22'))
+            boxstyle="round,pad=0.05", lw=0, facecolor='#F1F5F9'))
         # 左アクセントバー
         ax.plot([0.4, 0.4], [5.9, 6.65], color=C_ACCENT, lw=5,
                 solid_capstyle='round')
@@ -670,6 +671,22 @@ def generate_posts_with_claude(
         "- A型（実践ノウハウ）: 少なくとも1件に flow または list の図解を付けること（needs_image: true）。\n"
         "  手順の流れ→ flow、コツ・ポイントの列挙→ list が向いている\n"
         "- C/D型: 原則 needs_image: false。ただし「原因→対策」のような構造が明確な場合は flow を付けてよい\n\n"
+        "【複数枚スライド（カルーセル）— 起承転結で構成する】\n"
+        "枚数は投稿内容に合わせて最適化すること。4枚は上限でありノルマではない。\n"
+        "スライドを増やすほど離脱も増える。その枚数でしか伝えられない時だけ増やすこと:\n"
+        "- 1枚で伝わる内容 → 1枚（迷ったらこれ。1枚で伝わるなら1枚が最強）\n"
+        "- 対比や理由を1つ足すと伝わる → 2枚（起→結）\n"
+        "- 「実は◯◯」という発見でストーリーを作れる → 3枚（起→転→結）\n"
+        "- 背景・原因まで丁寧に語る価値がある濃いテーマ → 4枚（起→承→転→結）\n\n"
+        "複数枚にする場合の役割:\n"
+        "- 起（1枚目・表紙）: 問題提起・共感フック。「あ、自分のことだ」と思わせて手を止めさせる\n"
+        "- 承: 背景・原因の深掘り。なぜその問題が起きるのかを納得させる\n"
+        "- 転: 視点の転換・解決策。「実は◯◯だった」という一番の見せ場\n"
+        "- 結（最終枚）: まとめと次の一歩。読者が今日やることを1つ提示して保存を促す\n"
+        "- 複数枚のとき、各チャートに \"role\" フィールド（起/承/転/結 のいずれか1文字）を必ず入れること（画像右上に表示される）\n"
+        "- チャート種類は自由に組み合わせる（例: 起=list、承=comparison、転=flow、結=stat）\n"
+        "- 各スライドは単体でも意味が通ること。前のスライドを読まないと分からない書き方は禁止\n"
+        "- 水増し禁止: 同じ内容の言い換えでスライドを増やさない。枚数を1枚減らせないか必ず自問すること\n\n"
         "数字の扱い:\n"
         "- 数字を使うチャート（stat / bar）は参考ニュース由来の実在する数字のみ。捏造禁止\n"
         "- flow / list は投稿内容の構造化なので数字は不要。自由に作ってよい\n\n"
@@ -743,15 +760,20 @@ def generate_posts_with_claude(
         "[\n"
         '  {"text":"X向け投稿文","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
         '"type":"ノウハウ","theme":"テーマ","needs_image":false},\n'
+        '  {"text":"X向け投稿文","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
+        '"type":"ノウハウ","theme":"テーマ","needs_image":true,'
+        '"charts":[{"chart_type":"list","title":"...","items":[...]}]},\n'
         '  {"text":"数字を含むX向け投稿文","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
         '"type":"データ","theme":"テーマ","needs_image":true,'
-        '"chart":{"chart_type":"stat","title":"...","stats":[...]}}\n'
+        '"charts":[{"role":"起","chart_type":"list","title":"...","items":[...]},'
+        '{"role":"転","chart_type":"flow","title":"...","steps":[...]},'
+        '{"role":"結","chart_type":"stat","title":"...","stats":[...]}]}\n'
         "]"
     )
 
     message = ai_client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=11000,
+        max_tokens=13000,
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -802,11 +824,19 @@ def save_to_notion(posts: list[dict], image_urls: dict) -> int:
         if post_type:
             properties[PROP_POST_TYPE] = {"select": {"name": post_type[:50]}}
         if i in image_urls:
-            properties[PROP_IMAGE_URL] = {"url": image_urls[i]}
+            urls = image_urls[i]
+            if isinstance(urls, str):  # 旧形式（単一URL）との互換
+                urls = [urls]
+            properties[PROP_IMAGE_URL] = {"url": urls[0]}
+            if len(urls) > 1:
+                properties[PROP_IMAGE_URLS] = {
+                    "rich_text": [{"text": {"content": "\n".join(urls)[:2000]}}]
+                }
 
         # 任意プロパティ（Notion側に未作成でも保存が失敗しないように、
         # エラーに名前が含まれていたら外して再試行する）
-        optional_props = [PROP_THREADS_TEXT, PROP_REPLY_TEXT, PROP_POST_TYPE]
+        optional_props = [PROP_THREADS_TEXT, PROP_REPLY_TEXT, PROP_POST_TYPE,
+                          PROP_IMAGE_URLS]
 
         try:
             for _attempt in range(len(optional_props) + 1):
@@ -906,36 +936,47 @@ def run():
         print("投稿の生成に失敗しました", file=sys.stderr)
         sys.exit(1)
 
-    # 画像生成
+    # 画像生成（charts配列 = カルーセル対応。旧形式の chart 単体も受け付ける）
     image_urls: dict = {}
     image_count = 0
+    slide_count = 0
     for i, post in enumerate(posts):
-        if not post.get("needs_image") or "chart" not in post:
+        charts = post.get("charts")
+        if not charts and isinstance(post.get("chart"), dict):
+            charts = [post["chart"]]
+        if not post.get("needs_image") or not charts:
             continue
-        filename = f"{date_str}-{i+1}.png"
-        out_path = IMAGE_DIR / filename
-        print(f"  画像生成中 [{i+1}]: {post.get('theme', '')}")
-        # playwright優先、失敗時はmatplotlibにフォールバック
-        ok = False
-        if _HAS_WEB_RENDERER:
-            ok = _gen_web(post["chart"], out_path, _cfg("branding"))
+        charts = [c for c in charts if isinstance(c, dict)][:4]
+        total  = len(charts)
+        print(f"  画像生成中 [{i+1}]: {post.get('theme', '')}（{total}枚）")
+
+        urls = []
+        for j, chart in enumerate(charts, start=1):
+            suffix   = f"-{j}" if total > 1 else ""
+            filename = f"{date_str}-{i+1}{suffix}.png"
+            out_path = IMAGE_DIR / filename
+            # playwright優先、失敗時はmatplotlibにフォールバック
+            ok = False
+            if _HAS_WEB_RENDERER:
+                ok = _gen_web(chart, out_path, _cfg("branding"), page=(j, total))
+                if ok:
+                    print(f"    [{j}/{total}] playwright (高解像度)")
+            if not ok:
+                ok = generate_chart_image(chart, out_path)
+                if ok:
+                    print(f"    [{j}/{total}] matplotlib (フォールバック)")
             if ok:
-                print("    レンダラー: playwright (高解像度)")
-        if not ok:
-            ok = generate_chart_image(post["chart"], out_path)
-            if ok:
-                print("    レンダラー: matplotlib (フォールバック)")
-        if ok:
-            if GITHUB_REPOSITORY:
-                owner_repo = GITHUB_REPOSITORY  # e.g. "Saito3110-imadoki/sns-scheduler"
-                owner, repo = owner_repo.split("/", 1)
-                url = (f"https://{owner}.github.io/{repo}/post-images/{filename}")
-            else:
-                url = str(out_path)
-            image_urls[i] = url
+                if GITHUB_REPOSITORY:
+                    owner, repo = GITHUB_REPOSITORY.split("/", 1)
+                    urls.append(f"https://{owner}.github.io/{repo}/post-images/{filename}")
+                else:
+                    urls.append(str(out_path))
+                slide_count += 1
+
+        if urls:
+            image_urls[i] = urls
             image_count += 1
-            print(f"    保存先: {out_path}")
-    print(f"  画像生成: {image_count}件")
+    print(f"  画像生成: {image_count}投稿 / 計{slide_count}枚")
 
     print("Notionに保存中...")
     saved = save_to_notion(posts, image_urls)
