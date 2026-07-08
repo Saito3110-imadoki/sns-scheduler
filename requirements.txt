@@ -6,3 +6,4 @@ anthropic>=0.40.0
 feedparser==6.0.11
 matplotlib>=3.9.0
 playwright>=1.40.0
+PyYAML>=6.0

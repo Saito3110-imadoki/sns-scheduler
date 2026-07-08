@@ -8,24 +8,67 @@ import os
 import sys
 import io
 import time
+import yaml
 import requests
 import tweepy
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from notion_client import Client
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# 共通通知モジュール
+_SCRIPT_DIR = Path(__file__).parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+from notify import notify_error, notify_post_complete
+
 JST = timezone(timedelta(hours=9))
 
+# ── config.yaml 読み込み ──────────────────────────────────
+_CONFIG_PATH = Path(__file__).parent / "config.yaml"
+_CFG: dict = {}
+if _CONFIG_PATH.exists():
+    try:
+        with open(_CONFIG_PATH, encoding="utf-8") as _f:
+            _CFG = yaml.safe_load(_f) or {}
+    except Exception as _ce:
+        print(f"[config] 読み込みエラー（デフォルト値を使用）: {_ce}")
+
+
+def _cfg(*keys, default=None):
+    node = _CFG
+    for k in keys:
+        if not isinstance(node, dict):
+            return default
+        node = node.get(k)
+        if node is None:
+            return default
+    return node
+
+
+def _env(name: str, prefix: str = "", required: bool = True) -> str:
+    """env_prefix付きで環境変数を取得。prefix='CLIENT_A' → 'CLIENT_A_X_API_KEY'"""
+    key = f"{prefix}_{name}" if prefix else name
+    val = os.environ.get(key, "")
+    if required and not val:
+        raise EnvironmentError(f"環境変数 {key} が設定されていません")
+    return val
+
+
+# ── 設定値 ────────────────────────────────────────────────
 NOTION_TOKEN       = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 
-PROP_TEXT      = "投稿文"
-PROP_DATETIME  = "投稿日時"
-PROP_PLATFORM  = "媒体"
-PROP_STATUS    = "ステータス"
-PROP_IMAGE_URL = "画像URL"
+PROP_TEXT         = _cfg("notion", "properties", "text",         default="投稿文")
+PROP_THREADS_TEXT = _cfg("notion", "properties", "threads_text", default="Threads用文面")
+PROP_REPLY_TEXT   = _cfg("notion", "properties", "reply_text",   default="リプライ文面")
+PROP_DATETIME     = _cfg("notion", "properties", "datetime",     default="投稿日時")
+PROP_PLATFORM     = _cfg("notion", "properties", "platform",     default="媒体")
+PROP_STATUS       = _cfg("notion", "properties", "status",       default="ステータス")
+PROP_IMAGE_URL    = _cfg("notion", "properties", "image_url",    default="画像URL")
+PROP_TWEET_ID     = _cfg("notion", "properties", "tweet_id",     default="X投稿ID")
 
 STATUS_PENDING = "未投稿"
 STATUS_DONE    = "投稿済"
@@ -33,14 +76,16 @@ STATUS_ERROR   = "エラー"
 
 PLATFORM_X       = "X"
 PLATFORM_THREADS = "Threads"
-PLATFORM_BOTH    = "両方"
+PLATFORM_BOTH    = _cfg("notion", "platform", "default", default="両方")
 
 
+# ── Notion ヘルパー ───────────────────────────────────────
 def get_notion_client() -> Client:
     return Client(auth=NOTION_TOKEN)
 
 
 def fetch_pending_posts(notion: Client) -> list[dict]:
+    """ステータスが「未投稿」かつ投稿日時が現在以前のレコードを取得"""
     now_utc = datetime.now(timezone.utc).isoformat()
     response = notion.databases.query(
         database_id=NOTION_DATABASE_ID,
@@ -63,6 +108,22 @@ def extract_text(page: dict) -> str:
         return "".join(p["plain_text"] for p in prop.get("title", []))
     if prop.get("type") == "rich_text":
         return "".join(p["plain_text"] for p in prop.get("rich_text", []))
+    return ""
+
+
+def extract_threads_text(page: dict) -> str:
+    """Threads用文面を取得。未設定なら空文字列（呼び出し側でX文面にフォールバック）"""
+    prop = page["properties"].get(PROP_THREADS_TEXT, {})
+    if prop.get("type") == "rich_text":
+        return "".join(p["plain_text"] for p in prop.get("rich_text", [])).strip()
+    return ""
+
+
+def extract_reply_text(page: dict) -> str:
+    """セルフリプライ文面を取得。未設定なら空文字列（リプライなし）"""
+    prop = page["properties"].get(PROP_REPLY_TEXT, {})
+    if prop.get("type") == "rich_text":
+        return "".join(p["plain_text"] for p in prop.get("rich_text", [])).strip()
     return ""
 
 
@@ -96,13 +157,52 @@ def extract_image_url(page: dict) -> str:
     return ""
 
 
-def update_status(notion: Client, page_id: str, status: str):
-    notion.pages.update(
-        page_id=page_id,
-        properties={PROP_STATUS: {"multi_select": [{"name": status}]}},
-    )
+def update_status(notion: Client, page_id: str, status: str,
+                  tweet_id: str = ""):
+    props: dict = {PROP_STATUS: {"multi_select": [{"name": status}]}}
+    if tweet_id:
+        props[PROP_TWEET_ID] = {"rich_text": [{"text": {"content": tweet_id}}]}
+    notion.pages.update(page_id=page_id, properties=props)
 
 
+# ── 文字数ガード ──────────────────────────────────────────
+# X: 重み付きカウント（半角系=1 / 全角・CJK=2）で280が上限。
+#    X Premium なら実質無制限のため、config の x_char_limit=0 でスキップ。
+# Threads: 500文字のハード上限（全プランで固定）。
+X_CHAR_LIMIT       = int(_cfg("content", "x_char_limit", default=0))
+THREADS_CHAR_LIMIT = 500
+
+
+def _x_weighted_len(text: str) -> int:
+    """Xの重み付き文字数（近似）。半角英数記号=1、それ以外=2"""
+    return sum(1 if ord(ch) <= 0x10FF else 2 for ch in text)
+
+
+def _trim_for_x(text: str, limit: int = X_CHAR_LIMIT) -> str:
+    """X向けに重み付き文字数で切り詰める。limit=0 は制限なし（Premium）"""
+    if limit <= 0 or _x_weighted_len(text) <= limit:
+        return text
+    out, w = [], 0
+    for ch in text:
+        cw = 1 if ord(ch) <= 0x10FF else 2
+        if w + cw > limit - 2:  # 末尾の「…」分を確保
+            break
+        out.append(ch)
+        w += cw
+    trimmed = "".join(out).rstrip() + "…"
+    print(f"  ⚠ X文字数超過のため切り詰め（重み{_x_weighted_len(text)}→上限{limit}）")
+    return trimmed
+
+
+def _trim_for_threads(text: str, limit: int = THREADS_CHAR_LIMIT) -> str:
+    """Threadsの500文字上限を保証する"""
+    if len(text) <= limit:
+        return text
+    print(f"  ⚠ Threads文字数超過のため切り詰め（{len(text)}→{limit}文字）")
+    return text[: limit - 1].rstrip() + "…"
+
+
+# ── 画像ダウンロード ──────────────────────────────────────
 def download_image(url: str) -> bytes | None:
     try:
         r = requests.get(url, timeout=30)
@@ -113,7 +213,9 @@ def download_image(url: str) -> bytes | None:
         return None
 
 
-def post_to_x(text: str, image_url: str = "") -> bool:
+# ── X（Twitter）投稿 ──────────────────────────────────────
+def post_to_x(text: str, image_url: str = "") -> str:
+    """投稿してツイートIDを返す。失敗時は空文字列。"""
     consumer_key    = os.environ["X_API_KEY"]
     consumer_secret = os.environ["X_API_KEY_SECRET"]
     access_token    = os.environ["X_ACCESS_TOKEN"]
@@ -145,13 +247,56 @@ def post_to_x(text: str, image_url: str = "") -> bool:
         text=text,
         **({"media_ids": media_ids} if media_ids else {}),
     )
+    if response.data:
+        return str(response.data["id"])
+    return ""
+
+
+def post_x_reply(tweet_id: str, text: str) -> bool:
+    """投稿済みツイートに自分でリプライをぶら下げる（スレッド化）"""
+    client = tweepy.Client(
+        consumer_key=os.environ["X_API_KEY"],
+        consumer_secret=os.environ["X_API_KEY_SECRET"],
+        access_token=os.environ["X_ACCESS_TOKEN"],
+        access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
+    )
+    response = client.create_tweet(text=text, in_reply_to_tweet_id=tweet_id)
     return response.data is not None
 
 
+# ── Telegraph アップロード ────────────────────────────────
+def upload_to_telegraph(image_data: bytes) -> str:
+    try:
+        r = requests.post(
+            "https://telegra.ph/upload",
+            files={"file": ("image.png", image_data, "image/png")},
+            timeout=30,
+        )
+        r.raise_for_status()
+        path = r.json()[0]["src"]
+        url  = f"https://telegra.ph{path}"
+        print(f"  Telegraph: アップロード完了 → {url}")
+        return url
+    except Exception as e:
+        print(f"  Telegraph: アップロードエラー: {e}")
+        return ""
+
+
+# ── Threads 投稿 ──────────────────────────────────────────
 def post_to_threads(text: str, image_url: str = "") -> bool:
     user_id = os.environ["THREADS_USER_ID"]
     token   = os.environ["THREADS_ACCESS_TOKEN"]
     base    = f"https://graph.threads.net/v1.0/{user_id}"
+
+    if image_url:
+        image_data = download_image(image_url)
+        if image_data:
+            telegraph_url = upload_to_telegraph(image_data)
+            if telegraph_url:
+                image_url = telegraph_url
+            else:
+                print("  Threads: 画像アップロード失敗のためテキストのみで投稿")
+                image_url = ""
 
     if image_url:
         params = {
@@ -182,9 +327,10 @@ def post_to_threads(text: str, image_url: str = "") -> bool:
     return "id" in r.json()
 
 
+# ── メイン処理 ────────────────────────────────────────────
 def run():
     now = datetime.now(JST)
-    print(f"[{now.strftime('%Y-%m-%d %H:%M')} JST] 実行開始")
+    print(f"[{now.strftime('%Y-%m-%d %H:%M')} JST] 自動投稿 実行開始")
 
     notion = get_notion_client()
 
@@ -204,18 +350,22 @@ def run():
     error_count  = 0
 
     for page in posts:
-        page_id   = page["id"]
-        text      = extract_text(page)
-        platform  = extract_platform(page)
-        sched_dt  = extract_datetime(page)
-        image_url = extract_image_url(page)
+        page_id      = page["id"]
+        text         = _trim_for_x(extract_text(page))
+        threads_text = _trim_for_threads(extract_threads_text(page)
+                                         or extract_text(page))  # 未設定ならX文面を使用
+        reply_text   = _trim_for_x(extract_reply_text(page))
+        platform     = extract_platform(page)
+        sched_dt     = extract_datetime(page)
+        image_url    = extract_image_url(page)
 
         label = text[:30] + ("..." if len(text) > 30 else "")
-        print(f"\n  ページID: {page_id}")
-        print(f"  投稿文  : {label}")
+        print(f"\n  投稿文  : {label}")
         print(f"  媒体    : {platform}")
         print(f"  予定日時: {sched_dt}")
         print(f"  画像URL : {image_url or '（なし）'}")
+        if threads_text != text:
+            print(f"  Threads文面: あり（{len(threads_text)}文字）")
 
         if not text:
             print("  → 投稿文が空のためスキップ")
@@ -224,20 +374,32 @@ def run():
             print(f"  → 媒体の値が不正のためスキップ（値: {platform!r}）")
             continue
 
-        ok_x       = True
+        tweet_id   = ""
         ok_threads = True
 
         try:
             if platform in (PLATFORM_X, PLATFORM_BOTH):
-                ok_x = post_to_x(text, image_url)
-                print(f"  X       : {'✓ 投稿成功' if ok_x else '✗ 投稿失敗'}")
+                tweet_id = post_to_x(text, image_url)
+                print(f"  X       : {'✓ 投稿成功 ID=' + tweet_id if tweet_id else '✗ 投稿失敗'}")
+
+                # セルフリプライ（失敗しても投稿自体は成功扱い）
+                if tweet_id and reply_text:
+                    try:
+                        time.sleep(3)
+                        if post_x_reply(tweet_id, reply_text):
+                            print("  X リプライ: ✓ 投稿成功")
+                        else:
+                            print("  X リプライ: ✗ 投稿失敗（本文は投稿済み）")
+                    except Exception as re_err:
+                        print(f"  X リプライ: ✗ エラー（本文は投稿済み）: {re_err}")
 
             if platform in (PLATFORM_THREADS, PLATFORM_BOTH):
-                ok_threads = post_to_threads(text, image_url)
+                ok_threads = post_to_threads(threads_text, image_url)
                 print(f"  Threads : {'✓ 投稿成功' if ok_threads else '✗ 投稿失敗'}")
 
-            if ok_x and ok_threads:
-                update_status(notion, page_id, STATUS_DONE)
+            x_ok = bool(tweet_id) if platform in (PLATFORM_X, PLATFORM_BOTH) else True
+            if x_ok and ok_threads:
+                update_status(notion, page_id, STATUS_DONE, tweet_id=tweet_id)
                 print("  ステータス → 投稿済")
                 posted_count += 1
             else:
@@ -246,7 +408,9 @@ def run():
                 error_count += 1
 
         except Exception as e:
+            detail = f"{text[:30]}... / {e}"
             print(f"  エラー発生: {e}", file=sys.stderr)
+            notify_error("自動投稿（poster.py）", detail)
             try:
                 update_status(notion, page_id, STATUS_ERROR)
             except Exception:
@@ -254,6 +418,7 @@ def run():
             error_count += 1
 
     print(f"\n完了 — 投稿済: {posted_count} 件 / エラー: {error_count} 件")
+    notify_post_complete(posted_count, error_count)
 
 
 if __name__ == "__main__":

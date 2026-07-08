@@ -3,19 +3,20 @@ SNS投稿用高解像度インフォグラフィック生成
 playwright + インラインHTML/CSS → 1200×630px PNG
 """
 
+import re
 from pathlib import Path
 import html as _h
 
 # ── カラーパレット ──────────────────────────────────────────
-_BG       = "#0f172a"
-_SURFACE  = "#1e293b"
-_CARD     = "#0b1628"
-_BORDER   = "#334155"
-_MAIN     = "#6366f1"
-_ACCENT   = "#fbbf24"
-_GREEN    = "#34d399"
-_TEXT     = "#f1f5f9"
-_MUTED    = "#64748b"
+_BG       = "#0f172a"   # slate-900
+_SURFACE  = "#1e293b"   # slate-800
+_CARD     = "#0b1628"   # deep blue-dark
+_BORDER   = "#334155"   # slate-700
+_MAIN     = "#6366f1"   # indigo-500
+_ACCENT   = "#fbbf24"   # amber-400
+_GREEN    = "#34d399"   # emerald-400
+_TEXT     = "#f1f5f9"   # slate-100
+_MUTED    = "#64748b"   # slate-500
 _IMP_BG   = "#1c1400"
 _IMP_BD   = "#92400e"
 
@@ -26,6 +27,7 @@ def _e(s: object) -> str:
     return _h.escape(str(s))
 
 
+# ── SVGアイコン（lucide-react準拠のSVGパス）────────────────
 _ICON_ZAP = """<svg width="42" height="42" viewBox="0 0 24 24" fill="none"
   stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
@@ -54,6 +56,42 @@ _ICON_ROCKET = """<svg width="42" height="42" viewBox="0 0 24 24" fill="none"
 _ICONS = [_ICON_ZAP, _ICON_COINS, _ICON_TRENDING, _ICON_ROCKET]
 
 
+# ── ブランディング適用 ────────────────────────────────────
+def _apply_branding(html: str, branding: dict) -> str:
+    """生成済みHTMLにブランドカラーとウォーターマークを適用する"""
+    if not branding:
+        return html
+
+    primary = branding.get("primary_color", "").strip()
+    accent  = branding.get("accent_color", "").strip()
+
+    # 大文字小文字を統一してから置換
+    if primary:
+        html = re.sub(re.escape(_MAIN),   primary, html, flags=re.IGNORECASE)
+    if accent:
+        html = re.sub(re.escape(_ACCENT), accent,  html, flags=re.IGNORECASE)
+
+    # ウォーターマーク（右下）
+    logo_url     = branding.get("logo_url", "").strip()
+    company_name = branding.get("company_name", "").strip()
+    if logo_url or company_name:
+        inner = (
+            f'<img src="{logo_url}" '
+            f'style="height:26px;opacity:0.75;object-fit:contain;">'
+            if logo_url else
+            f'<span style="font-size:11px;color:{_MUTED};font-weight:700;'
+            f'letter-spacing:1px;opacity:0.85;">{_e(company_name)}</span>'
+        )
+        watermark = (
+            f'<div style="position:absolute;bottom:14px;right:22px;'
+            f'display:flex;align-items:center;z-index:99;">{inner}</div>'
+        )
+        html = html.replace("</div>\n</body>", f"{watermark}\n</div>\n</body>")
+
+    return html
+
+
+# ── ベースHTML ────────────────────────────────────────────
 def _base(body: str) -> str:
     return f"""<!DOCTYPE html>
 <html><head><meta charset="UTF-8">
@@ -68,7 +106,7 @@ body{{
   -webkit-font-smoothing:antialiased;
 }}
 </style></head><body>
-<div style="width:{W}px;height:{H}px;display:flex;flex-direction:column;">
+<div style="width:{W}px;height:{H}px;display:flex;flex-direction:column;position:relative;">
 {body}
 </div>
 </body></html>"""
@@ -105,6 +143,7 @@ def _impact_footer(impact: str = "", caption: str = "") -> str:
     return "\n".join(parts)
 
 
+# ── stat チャート ─────────────────────────────────────────
 def _html_stat(chart: dict) -> str:
     stats   = chart.get("stats", [])
     impact  = chart.get("impact", "")
@@ -117,6 +156,7 @@ def _html_stat(chart: dict) -> str:
         ctx   = st.get("context", "")
         icon  = _ICONS[i % len(_ICONS)]
 
+        # 値の長さに応じてフォントサイズを調整
         vsize = ("80px" if len(val) <= 3
                  else "68px" if len(val) <= 5
                  else "52px" if len(val) <= 8
@@ -132,12 +172,16 @@ def _html_stat(chart: dict) -> str:
   padding:28px 20px 24px;text-align:center;position:relative;overflow:hidden;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
   box-shadow:0 0 30px rgba(99,102,241,0.25),inset 0 1px 0 rgba(255,255,255,0.05);">
+  <!-- グラデーション上部バー -->
   <div style="position:absolute;top:0;left:20px;right:20px;height:4px;
     background:linear-gradient(90deg,{_ACCENT},{_MAIN});border-radius:0 0 4px 4px;"></div>
+  <!-- アイコン -->
   <div style="margin-bottom:10px;">{icon}</div>
   {ctx_html}
+  <!-- 数値 -->
   <div style="font-size:{vsize};font-weight:900;color:{_ACCENT};line-height:1;
     letter-spacing:-2px;text-shadow:0 0 40px rgba(251,191,36,0.4);">{_e(val)}</div>
+  <!-- ラベル -->
   <div style="font-size:15px;color:{_TEXT};margin-top:14px;font-weight:600;
     line-height:1.5;max-width:180px;">{_e(label)}</div>
 </div>""")
@@ -150,6 +194,7 @@ def _html_stat(chart: dict) -> str:
 {_impact_footer(impact, caption)}""")
 
 
+# ── bar チャート ──────────────────────────────────────────
 def _html_bar(chart: dict) -> str:
     labels  = chart.get("labels", [])
     values  = chart.get("values", [])
@@ -167,7 +212,7 @@ def _html_bar(chart: dict) -> str:
   <div style="flex:1;background:{_SURFACE};border-radius:8px;height:38px;
     overflow:hidden;position:relative;border:1px solid {_BORDER};">
     <div style="width:{pct}%;background:linear-gradient(90deg,{_MAIN},{_ACCENT});
-      height:100%;border-radius:8px;"></div>
+      height:100%;border-radius:8px;transition:width 0s;"></div>
   </div>
   <div style="width:90px;font-size:18px;font-weight:900;color:{_ACCENT};
     flex-shrink:0;">{_e(val)}{_e(unit)}</div>
@@ -182,6 +227,7 @@ def _html_bar(chart: dict) -> str:
 {_impact_footer("", caption)}""")
 
 
+# ── comparison チャート ───────────────────────────────────
 def _html_comparison(chart: dict) -> str:
     ll    = chart.get("left_label", "従来")
     rl    = chart.get("right_label", "新手法")
@@ -192,13 +238,13 @@ def _html_comparison(chart: dict) -> str:
     cap   = chart.get("caption", "")
 
     def _panel(items: list, label: str, active: bool) -> str:
-        bg     = _CARD if active else _SURFACE
-        border = _MAIN if active else _BORDER
-        dot_c  = _MAIN if active else _MUTED
-        txt_c  = _TEXT if active else _MUTED
-        lbl_c  = _MAIN if active else _MUTED
-        shadow = f";box-shadow:0 0 28px rgba(99,102,241,0.2)" if active else ""
-        rows   = "".join(
+        bg      = _CARD if active else _SURFACE
+        border  = _MAIN if active else _BORDER
+        dot_c   = _MAIN if active else _MUTED
+        txt_c   = _TEXT if active else _MUTED
+        lbl_c   = _MAIN if active else _MUTED
+        shadow  = f";box-shadow:0 0 28px rgba(99,102,241,0.2)" if active else ""
+        rows    = "".join(
             f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
             f'<div style="width:8px;height:8px;border-radius:50%;background:{dot_c};flex-shrink:0;"></div>'
             f'<span style="font-size:14px;color:{txt_c};line-height:1.4;">{_e(it)}</span></div>'
@@ -232,7 +278,9 @@ def _html_comparison(chart: dict) -> str:
 {_impact_footer("", cap)}""")
 
 
-def generate_infographic(chart: dict, output_path: Path) -> bool:
+# ── メイン描画関数 ────────────────────────────────────────
+def generate_infographic(chart: dict, output_path: Path,
+                         branding: dict | None = None) -> bool:
     """HTMLをplaywrightでレンダリングしPNG保存。失敗時はFalse"""
     try:
         from playwright.sync_api import sync_playwright
@@ -248,6 +296,8 @@ def generate_infographic(chart: dict, output_path: Path) -> bool:
         html = _html_comparison(chart)
     else:
         return False
+
+    html = _apply_branding(html, branding or {})
 
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
