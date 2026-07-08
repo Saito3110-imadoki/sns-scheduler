@@ -59,11 +59,13 @@ def notify_post_complete(posted: int, errors: int) -> None:
     send_line_message(text)
 
 
-def notify_analytics_complete(updated: int) -> None:
-    """パフォーマンス計測完了通知"""
+def notify_analytics_complete(updated: int, extra: str = "") -> None:
+    """パフォーマンス計測完了通知。extra にはフォロワー数の行などを渡す"""
     now  = datetime.now(JST)
+    follower_block = f"👥 フォロワー\n{extra}\n\n" if extra else ""
     text = (
         f"📊 パフォーマンス計測 完了\n\n"
+        f"{follower_block}"
         f"📈 更新件数: {updated} 件\n"
         f"🕐 {now.strftime('%Y/%m/%d %H:%M')} JST\n\n"
         "Notionで最新のいいね数・インプレッションを確認できます。"

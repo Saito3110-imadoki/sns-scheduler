@@ -117,13 +117,16 @@ notion:
     platform: 媒体
     status: ステータス
     image_url: 画像URL
-    # 自動投稿後に記録されるツイートID
+    # 自動投稿後に記録される投稿ID
     tweet_id: X投稿ID
+    threads_post_id: Threads投稿ID
     # 毎日22時に自動計測されるエンゲージメント指標
     likes: いいね数
     retweets: RT数
     replies: リプライ数
     impressions: インプレッション
+    threads_likes: Threadsいいね数
+    threads_views: Threads閲覧数
     analytics_date: 計測日時
   status:
     pending: 承認待ち

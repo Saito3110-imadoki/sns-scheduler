@@ -69,6 +69,7 @@ PROP_PLATFORM     = _cfg("notion", "properties", "platform",     default="媒体
 PROP_STATUS       = _cfg("notion", "properties", "status",       default="ステータス")
 PROP_IMAGE_URL    = _cfg("notion", "properties", "image_url",    default="画像URL")
 PROP_TWEET_ID     = _cfg("notion", "properties", "tweet_id",     default="X投稿ID")
+PROP_THREADS_ID   = _cfg("notion", "properties", "threads_post_id", default="Threads投稿ID")
 
 STATUS_PENDING = "未投稿"
 STATUS_DONE    = "投稿済"
@@ -158,11 +159,26 @@ def extract_image_url(page: dict) -> str:
 
 
 def update_status(notion: Client, page_id: str, status: str,
-                  tweet_id: str = ""):
+                  tweet_id: str = "", threads_id: str = ""):
     props: dict = {PROP_STATUS: {"multi_select": [{"name": status}]}}
     if tweet_id:
         props[PROP_TWEET_ID] = {"rich_text": [{"text": {"content": tweet_id}}]}
-    notion.pages.update(page_id=page_id, properties=props)
+    if threads_id:
+        props[PROP_THREADS_ID] = {"rich_text": [{"text": {"content": threads_id}}]}
+
+    # 任意プロパティが未作成でもステータス更新は必ず通す
+    optional = [PROP_TWEET_ID, PROP_THREADS_ID]
+    for _ in range(len(optional) + 1):
+        try:
+            notion.pages.update(page_id=page_id, properties=props)
+            return
+        except Exception as e:
+            removable = [p for p in optional if p in props and p in str(e)]
+            if not removable:
+                raise
+            for p in removable:
+                print(f"  ※ プロパティ「{p}」が未作成のためスキップ")
+                del props[p]
 
 
 # ── 文字数ガード ──────────────────────────────────────────
@@ -283,7 +299,8 @@ def upload_to_telegraph(image_data: bytes) -> str:
 
 
 # ── Threads 投稿 ──────────────────────────────────────────
-def post_to_threads(text: str, image_url: str = "") -> bool:
+def post_to_threads(text: str, image_url: str = "") -> str:
+    """投稿して公開後のメディアIDを返す。失敗時は空文字列。"""
     user_id = os.environ["THREADS_USER_ID"]
     token   = os.environ["THREADS_ACCESS_TOKEN"]
     base    = f"https://graph.threads.net/v1.0/{user_id}"
@@ -324,7 +341,7 @@ def post_to_threads(text: str, image_url: str = "") -> bool:
         timeout=30,
     )
     r.raise_for_status()
-    return "id" in r.json()
+    return str(r.json().get("id", ""))
 
 
 # ── メイン処理 ────────────────────────────────────────────
@@ -375,7 +392,7 @@ def run():
             continue
 
         tweet_id   = ""
-        ok_threads = True
+        threads_id = ""
 
         try:
             if platform in (PLATFORM_X, PLATFORM_BOTH):
@@ -394,12 +411,14 @@ def run():
                         print(f"  X リプライ: ✗ エラー（本文は投稿済み）: {re_err}")
 
             if platform in (PLATFORM_THREADS, PLATFORM_BOTH):
-                ok_threads = post_to_threads(threads_text, image_url)
-                print(f"  Threads : {'✓ 投稿成功' if ok_threads else '✗ 投稿失敗'}")
+                threads_id = post_to_threads(threads_text, image_url)
+                print(f"  Threads : {'✓ 投稿成功 ID=' + threads_id if threads_id else '✗ 投稿失敗'}")
 
-            x_ok = bool(tweet_id) if platform in (PLATFORM_X, PLATFORM_BOTH) else True
-            if x_ok and ok_threads:
-                update_status(notion, page_id, STATUS_DONE, tweet_id=tweet_id)
+            x_ok       = bool(tweet_id)   if platform in (PLATFORM_X, PLATFORM_BOTH) else True
+            threads_ok = bool(threads_id) if platform in (PLATFORM_THREADS, PLATFORM_BOTH) else True
+            if x_ok and threads_ok:
+                update_status(notion, page_id, STATUS_DONE,
+                              tweet_id=tweet_id, threads_id=threads_id)
                 print("  ステータス → 投稿済")
                 posted_count += 1
             else:

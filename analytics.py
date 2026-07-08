@@ -1,12 +1,14 @@
 """
 投稿パフォーマンス計測スクリプト
-- Notionの「投稿済」レコードから X投稿ID を取得
+- Notionの「投稿済」レコードから X投稿ID / Threads投稿ID を取得
 - X API v2 でいいね数・RT数・リプライ数・インプレッションを一括取得
-- Notionの各レコードに書き戻す
+- Threads Insights API で閲覧数・いいね数を取得
+- フォロワー数（X / Threads）を記録し、前日比・前週比をLINE通知
 """
 
 import os
 import sys
+import json
 import yaml
 import tweepy
 import requests
@@ -49,40 +51,41 @@ def _cfg(*keys, default=None):
 NOTION_TOKEN       = os.environ["NOTION_TOKEN"]
 NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 
-PROP_STATUS       = _cfg("notion", "properties", "status",       default="ステータス")
-PROP_TWEET_ID     = _cfg("notion", "properties", "tweet_id",     default="X投稿ID")
-PROP_LIKES        = _cfg("notion", "properties", "likes",        default="いいね数")
-PROP_RETWEETS     = _cfg("notion", "properties", "retweets",     default="RT数")
-PROP_REPLIES      = _cfg("notion", "properties", "replies",      default="リプライ数")
-PROP_IMPRESSIONS  = _cfg("notion", "properties", "impressions",  default="インプレッション")
-PROP_ANALYTICS_DT = _cfg("notion", "properties", "analytics_date", default="計測日時")
+PROP_STATUS        = _cfg("notion", "properties", "status",        default="ステータス")
+PROP_TWEET_ID      = _cfg("notion", "properties", "tweet_id",      default="X投稿ID")
+PROP_THREADS_ID    = _cfg("notion", "properties", "threads_post_id", default="Threads投稿ID")
+PROP_LIKES         = _cfg("notion", "properties", "likes",         default="いいね数")
+PROP_RETWEETS      = _cfg("notion", "properties", "retweets",      default="RT数")
+PROP_REPLIES       = _cfg("notion", "properties", "replies",       default="リプライ数")
+PROP_IMPRESSIONS   = _cfg("notion", "properties", "impressions",   default="インプレッション")
+PROP_THREADS_LIKES = _cfg("notion", "properties", "threads_likes", default="Threadsいいね数")
+PROP_THREADS_VIEWS = _cfg("notion", "properties", "threads_views", default="Threads閲覧数")
+PROP_ANALYTICS_DT  = _cfg("notion", "properties", "analytics_date", default="計測日時")
 
 STATUS_DONE = "投稿済"
+
+# フォロワー数の履歴ファイル（リポジトリにコミットして蓄積）
+_HISTORY_PATH = _SCRIPT_DIR / "follower_history.json"
+
 
 # ── Notion ────────────────────────────────────────────────
 def get_notion_client() -> Client:
     return Client(auth=NOTION_TOKEN)
 
 
-def fetch_posted_with_tweet_id(notion: Client) -> list[dict]:
-    """「投稿済」かつ X投稿ID が入っているレコードを全件取得"""
+def fetch_posted_pages(notion: Client) -> list[dict]:
+    """「投稿済」レコードを全件取得（X/ThreadsのIDはコード側で判定）"""
     results = []
     cursor  = None
     while True:
         kwargs: dict = {
             "database_id": NOTION_DATABASE_ID,
-            "filter": {
-                "and": [
-                    {"property": PROP_STATUS,
-                     "multi_select": {"contains": STATUS_DONE}},
-                    {"property": PROP_TWEET_ID,
-                     "rich_text": {"is_not_empty": True}},
-                ]
-            },
+            "filter": {"property": PROP_STATUS,
+                       "multi_select": {"contains": STATUS_DONE}},
         }
         if cursor:
             kwargs["start_cursor"] = cursor
-        resp   = notion.databases.query(**kwargs)
+        resp = notion.databases.query(**kwargs)
         results.extend(resp.get("results", []))
         if not resp.get("has_more"):
             break
@@ -90,55 +93,181 @@ def fetch_posted_with_tweet_id(notion: Client) -> list[dict]:
     return results
 
 
-def extract_tweet_id(page: dict) -> str:
-    prop = page["properties"].get(PROP_TWEET_ID, {})
+def _extract_rich_text(page: dict, prop_name: str) -> str:
+    prop = page["properties"].get(prop_name, {})
     parts = prop.get("rich_text", [])
     return "".join(p["plain_text"] for p in parts).strip()
 
 
-def update_metrics(notion: Client, page_id: str, metrics: dict):
-    now_jst = datetime.now(JST).isoformat()
-    props: dict = {
-        PROP_ANALYTICS_DT: {"date": {"start": now_jst}},
-    }
-    if "like_count" in metrics:
-        props[PROP_LIKES]       = {"number": metrics["like_count"]}
-    if "retweet_count" in metrics:
-        props[PROP_RETWEETS]    = {"number": metrics["retweet_count"]}
-    if "reply_count" in metrics:
-        props[PROP_REPLIES]     = {"number": metrics["reply_count"]}
-    if "impression_count" in metrics:
-        props[PROP_IMPRESSIONS] = {"number": metrics["impression_count"]}
-    notion.pages.update(page_id=page_id, properties=props)
+def update_page_props(notion: Client, page_id: str, props: dict,
+                      optional: list[str]) -> bool:
+    """プロパティ更新。Notion側に未作成の任意プロパティは外して再試行する"""
+    for _ in range(len(optional) + 1):
+        try:
+            notion.pages.update(page_id=page_id, properties=props)
+            return True
+        except Exception as e:
+            removable = [p for p in optional if p in props and p in str(e)]
+            if not removable:
+                raise
+            for p in removable:
+                print(f"  ※ プロパティ「{p}」が未作成のためスキップ")
+                del props[p]
+    return False
 
 
 # ── X API ─────────────────────────────────────────────────
-def fetch_tweet_metrics_batch(tweet_ids: list[str]) -> dict[str, dict]:
-    """最大100件のツイートIDを一括でメトリクス取得。{tweet_id: metrics} を返す"""
-    client = tweepy.Client(
+def _x_client() -> tweepy.Client:
+    return tweepy.Client(
         consumer_key=os.environ["X_API_KEY"],
         consumer_secret=os.environ["X_API_KEY_SECRET"],
         access_token=os.environ["X_ACCESS_TOKEN"],
         access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
     )
 
+
+def fetch_tweet_metrics_batch(tweet_ids: list[str]) -> dict[str, dict]:
+    """最大100件のツイートIDを一括でメトリクス取得。{tweet_id: metrics} を返す"""
+    client = _x_client()
     result: dict[str, dict] = {}
-    # X API は一度に最大100件
     for i in range(0, len(tweet_ids), 100):
         batch = tweet_ids[i:i + 100]
         try:
-            resp = client.get_tweets(
-                ids=batch,
-                tweet_fields=["public_metrics"],
-            )
+            resp = client.get_tweets(ids=batch, tweet_fields=["public_metrics"])
             if resp.data:
                 for tweet in resp.data:
                     if tweet.public_metrics:
                         result[str(tweet.id)] = dict(tweet.public_metrics)
         except Exception as e:
             print(f"  X API エラー（バッチ {i//100 + 1}）: {e}")
-
     return result
+
+
+def fetch_x_followers() -> int | None:
+    """自アカウントのフォロワー数を取得"""
+    try:
+        me = _x_client().get_me(user_fields=["public_metrics"])
+        if me.data and me.data.public_metrics:
+            return me.data.public_metrics.get("followers_count")
+    except Exception as e:
+        print(f"  Xフォロワー数取得スキップ: {e}")
+    return None
+
+
+# ── Threads API ───────────────────────────────────────────
+def fetch_threads_media_insights(media_id: str) -> dict:
+    """Threads投稿の閲覧数・いいね数を取得。失敗時は空dict"""
+    token = os.environ.get("THREADS_ACCESS_TOKEN", "")
+    if not token:
+        return {}
+    try:
+        r = requests.get(
+            f"https://graph.threads.net/v1.0/{media_id}/insights",
+            params={"metric": "views,likes", "access_token": token},
+            timeout=30,
+        )
+        r.raise_for_status()
+        out = {}
+        for m in r.json().get("data", []):
+            name = m.get("name", "")
+            val  = None
+            tv   = m.get("total_value") or {}
+            if "value" in tv:
+                val = tv["value"]
+            else:
+                vals = m.get("values") or []
+                if vals:
+                    val = vals[-1].get("value")
+            if name and val is not None:
+                out[name] = val
+        return out
+    except Exception as e:
+        print(f"  Threads Insights取得スキップ（{media_id}）: {e}")
+        return {}
+
+
+def fetch_threads_followers() -> int | None:
+    """Threadsのフォロワー数を取得"""
+    user_id = os.environ.get("THREADS_USER_ID", "")
+    token   = os.environ.get("THREADS_ACCESS_TOKEN", "")
+    if not user_id or not token:
+        return None
+    try:
+        r = requests.get(
+            f"https://graph.threads.net/v1.0/{user_id}/threads_insights",
+            params={"metric": "followers_count", "access_token": token},
+            timeout=30,
+        )
+        r.raise_for_status()
+        for m in r.json().get("data", []):
+            if m.get("name") == "followers_count":
+                tv = m.get("total_value") or {}
+                if "value" in tv:
+                    return tv["value"]
+                vals = m.get("values") or []
+                if vals:
+                    return vals[-1].get("value")
+    except Exception as e:
+        print(f"  Threadsフォロワー数取得スキップ: {e}")
+    return None
+
+
+# ── フォロワー履歴 ────────────────────────────────────────
+def update_follower_history(x_followers: int | None,
+                            threads_followers: int | None) -> str:
+    """履歴JSONに今日の値を追記し、前日比・前週比の表示行を返す"""
+    history: list[dict] = []
+    if _HISTORY_PATH.exists():
+        try:
+            with open(_HISTORY_PATH, encoding="utf-8") as f:
+                history = json.load(f)
+        except Exception:
+            history = []
+
+    today = datetime.now(JST).strftime("%Y-%m-%d")
+    history = [h for h in history if h.get("date") != today]
+    history.append({"date": today, "x": x_followers, "threads": threads_followers})
+    history = history[-365:]  # 1年分保持
+
+    try:
+        with open(_HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        print(f"  履歴保存エラー: {e}")
+
+    def _find(days_ago: int) -> dict | None:
+        target = (datetime.now(JST) - timedelta(days=days_ago)).strftime("%Y-%m-%d")
+        for h in history:
+            if h.get("date") == target:
+                return h
+        return None
+
+    def _delta(cur, past) -> str:
+        if cur is None or past is None:
+            return ""
+        d = cur - past
+        return f"+{d}" if d >= 0 else str(d)
+
+    lines = []
+    yesterday = _find(1)
+    last_week = _find(7)
+    if x_followers is not None:
+        d1 = _delta(x_followers, (yesterday or {}).get("x"))
+        d7 = _delta(x_followers, (last_week or {}).get("x"))
+        detail = []
+        if d1: detail.append(f"前日{d1}")
+        if d7: detail.append(f"前週{d7}")
+        suffix = f"（{' / '.join(detail)}）" if detail else ""
+        lines.append(f"X: {x_followers:,}人{suffix}")
+    if threads_followers is not None:
+        d1 = _delta(threads_followers, (yesterday or {}).get("threads"))
+        d7 = _delta(threads_followers, (last_week or {}).get("threads"))
+        detail = []
+        if d1: detail.append(f"前日{d1}")
+        if d7: detail.append(f"前週{d7}")
+        suffix = f"（{' / '.join(detail)}）" if detail else ""
+        lines.append(f"Threads: {threads_followers:,}人{suffix}")
+    return "\n".join(lines)
 
 
 # ── メイン ────────────────────────────────────────────────
@@ -148,41 +277,92 @@ def run():
 
     notion = get_notion_client()
 
-    pages = fetch_posted_with_tweet_id(notion)
-    if not pages:
-        print("計測対象なし（投稿済みかつX投稿IDがあるレコードが0件）")
-        return
+    # ── フォロワー数の記録 ─────────────────────────────
+    print("フォロワー数取得中...")
+    x_followers       = fetch_x_followers()
+    threads_followers = fetch_threads_followers()
+    follower_line     = update_follower_history(x_followers, threads_followers)
+    if follower_line:
+        for line in follower_line.split("\n"):
+            print(f"  {line}")
+    else:
+        print("  フォロワー数を取得できませんでした")
 
-    print(f"計測対象: {len(pages)} 件")
-
-    tweet_ids = [extract_tweet_id(p) for p in pages]
-    id_to_page = {tid: p for tid, p in zip(tweet_ids, pages) if tid}
-
-    print("X APIでメトリクス取得中...")
+    # ── 投稿ごとのメトリクス ───────────────────────────
     try:
-        metrics_map = fetch_tweet_metrics_batch(list(id_to_page.keys()))
+        pages = fetch_posted_pages(notion)
     except Exception as e:
-        notify_error("パフォーマンス計測（analytics.py）", f"X API取得失敗: {e}")
-        print(f"X API取得失敗: {e}", file=sys.stderr)
+        notify_error("パフォーマンス計測（analytics.py）", f"Notion取得失敗: {e}")
+        print(f"Notion取得失敗: {e}", file=sys.stderr)
         sys.exit(1)
-    print(f"  取得成功: {len(metrics_map)} 件")
+
+    x_targets       = {}   # tweet_id   -> page
+    threads_targets = {}   # threads_id -> page
+    for page in pages:
+        tid = _extract_rich_text(page, PROP_TWEET_ID)
+        thid = _extract_rich_text(page, PROP_THREADS_ID)
+        if tid:
+            x_targets[tid] = page
+        if thid:
+            threads_targets[thid] = page
+
+    print(f"計測対象: X {len(x_targets)}件 / Threads {len(threads_targets)}件")
 
     updated = 0
-    for tweet_id, metrics in metrics_map.items():
-        page    = id_to_page[tweet_id]
-        page_id = page["id"]
-        try:
-            update_metrics(notion, page_id, metrics)
-            likes   = metrics.get("like_count", "-")
-            rts     = metrics.get("retweet_count", "-")
-            imp     = metrics.get("impression_count", "-")
-            print(f"  更新: ツイート {tweet_id} → いいね {likes} / RT {rts} / imp {imp}")
-            updated += 1
-        except Exception as e:
-            print(f"  Notion更新エラー（{tweet_id}）: {e}")
+
+    # X メトリクス（100件ずつバッチ）
+    if x_targets:
+        print("X APIでメトリクス取得中...")
+        metrics_map = fetch_tweet_metrics_batch(list(x_targets.keys()))
+        print(f"  取得成功: {len(metrics_map)} 件")
+        for tweet_id, metrics in metrics_map.items():
+            page_id = x_targets[tweet_id]["id"]
+            props: dict = {PROP_ANALYTICS_DT: {"date": {"start": now.isoformat()}}}
+            if "like_count" in metrics:
+                props[PROP_LIKES] = {"number": metrics["like_count"]}
+            if "retweet_count" in metrics:
+                props[PROP_RETWEETS] = {"number": metrics["retweet_count"]}
+            if "reply_count" in metrics:
+                props[PROP_REPLIES] = {"number": metrics["reply_count"]}
+            if "impression_count" in metrics:
+                props[PROP_IMPRESSIONS] = {"number": metrics["impression_count"]}
+            try:
+                update_page_props(notion, page_id, props,
+                                  optional=[PROP_LIKES, PROP_RETWEETS,
+                                            PROP_REPLIES, PROP_IMPRESSIONS,
+                                            PROP_ANALYTICS_DT])
+                print(f"  X更新: {tweet_id} → いいね {metrics.get('like_count','-')}"
+                      f" / RT {metrics.get('retweet_count','-')}"
+                      f" / imp {metrics.get('impression_count','-')}")
+                updated += 1
+            except Exception as e:
+                print(f"  Notion更新エラー（{tweet_id}）: {e}")
+
+    # Threads メトリクス（1件ずつ）
+    if threads_targets:
+        print("Threads Insightsでメトリクス取得中...")
+        for threads_id, page in threads_targets.items():
+            insights = fetch_threads_media_insights(threads_id)
+            if not insights:
+                continue
+            props = {PROP_ANALYTICS_DT: {"date": {"start": now.isoformat()}}}
+            if "likes" in insights:
+                props[PROP_THREADS_LIKES] = {"number": insights["likes"]}
+            if "views" in insights:
+                props[PROP_THREADS_VIEWS] = {"number": insights["views"]}
+            try:
+                update_page_props(notion, page["id"], props,
+                                  optional=[PROP_THREADS_LIKES,
+                                            PROP_THREADS_VIEWS,
+                                            PROP_ANALYTICS_DT])
+                print(f"  Threads更新: {threads_id} → いいね {insights.get('likes','-')}"
+                      f" / 閲覧 {insights.get('views','-')}")
+                updated += 1
+            except Exception as e:
+                print(f"  Notion更新エラー（Threads {threads_id}）: {e}")
 
     print(f"\n完了 — {updated} 件のメトリクスをNotionに保存しました")
-    notify_analytics_complete(updated)
+    notify_analytics_complete(updated, extra=follower_line)
 
 
 if __name__ == "__main__":
