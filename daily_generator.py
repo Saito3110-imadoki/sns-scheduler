@@ -272,6 +272,58 @@ def _draw_comparison(ax, chart: dict):
         _t(ax, 7.77, y, item, size=10.5, color=C_TEXT)
 
 
+def _draw_flow(ax, chart: dict):
+    steps = chart.get("steps", [])[:4]
+    n     = len(steps)
+    if not n:
+        return
+    top    = 5.0
+    bottom = 0.9
+    step_h = (top - bottom) / n
+    for i, st in enumerate(steps):
+        y = top - (i + 0.5) * step_h
+        is_last = (i == n - 1)
+        chip_c  = C_ACCENT if is_last else C_MAIN
+        # ラベルチップ
+        ax.add_patch(FancyBboxPatch((0.4, y - 0.28), 1.9, 0.56,
+            boxstyle="round,pad=0.06", lw=0, facecolor=chip_c))
+        _t(ax, 1.35, y, st.get("label", f"STEP{i+1}"), size=11,
+           color='#111111' if is_last else '#ffffff', bold=True,
+           ha='center', va='center')
+        # テキストボックス
+        ax.add_patch(FancyBboxPatch((2.7, y - 0.32), 8.9, 0.64,
+            boxstyle="round,pad=0.06", lw=1,
+            edgecolor=C_ACCENT if is_last else C_BORDER, facecolor='#0D1B2A'))
+        _t(ax, 3.0, y, st.get("text", ""), size=10.5, color=C_TEXT, va='center')
+        # 矢印
+        if not is_last:
+            ax.annotate('', xy=(1.35, y - step_h + 0.32), xytext=(1.35, y - 0.34),
+                arrowprops=dict(arrowstyle='->', color=C_MUTED, lw=2))
+
+
+def _draw_list(ax, chart: dict):
+    items = chart.get("items", [])[:4]
+    n     = len(items)
+    if not n:
+        return
+    top    = 5.0
+    bottom = 0.8
+    row_h  = (top - bottom) / n
+    for i, it in enumerate(items):
+        y = top - (i + 0.5) * row_h
+        ax.add_patch(FancyBboxPatch((0.4, y - row_h / 2 + 0.08), 11.2, row_h - 0.16,
+            boxstyle="round,pad=0.06", lw=1,
+            edgecolor=C_BORDER, facecolor='#0D1B2A'))
+        # 番号
+        ax.add_patch(FancyBboxPatch((0.7, y - 0.26), 0.52, 0.52,
+            boxstyle="round,pad=0.05", lw=0, facecolor=C_MAIN))
+        _t(ax, 0.96, y, str(i + 1), size=14, color='#ffffff', bold=True,
+           ha='center', va='center')
+        # 見出しと補足
+        _t(ax, 1.6, y + 0.16, it.get("head", ""), size=12.5, color=C_TEXT, bold=True)
+        _t(ax, 1.6, y - 0.22, it.get("text", ""), size=9.5, color=C_MUTED)
+
+
 def generate_chart_image(chart: dict, output_path: Path) -> bool:
     """チャート仕様から画像を生成してファイルに保存"""
     try:
@@ -308,6 +360,10 @@ def generate_chart_image(chart: dict, output_path: Path) -> bool:
             _draw_stat(ax, chart)
         elif chart_type == "comparison":
             _draw_comparison(ax, chart)
+        elif chart_type == "flow":
+            _draw_flow(ax, chart)
+        elif chart_type == "list":
+            _draw_list(ax, chart)
 
         # フッター
         if caption:
@@ -609,13 +665,19 @@ def generate_posts_with_claude(
         "- C/D型: 読者への具体的な問いかけで終わり、リプライを誘発（「みなさんはどっち派ですか？」等）\n\n"
         f"【禁止】{forbidden_str}・数字の捏造（参考ニュースにない統計数字を作らない）\n\n"
         "【図解生成ルール】\n"
-        "B型の投稿は needs_image: true とし、chart を必ず付けてください。\n"
-        "他のタイプは、参考ニュース由来の実在する数字が投稿に含まれる場合のみ needs_image: true。\n"
-        "数字の出典が参考ニュースにない場合は図解を作らず needs_image: false とし、chart は省略してください。\n\n"
+        "図解はSNSで最も保存されるコンテンツです。以下のルールで付けてください:\n"
+        "- B型（データ型）: needs_image: true 必須。数字系チャート（stat / bar / comparison）を付ける\n"
+        "- A型（実践ノウハウ）: 少なくとも1件に flow または list の図解を付けること（needs_image: true）。\n"
+        "  手順の流れ→ flow、コツ・ポイントの列挙→ list が向いている\n"
+        "- C/D型: 原則 needs_image: false。ただし「原因→対策」のような構造が明確な場合は flow を付けてよい\n\n"
+        "数字の扱い:\n"
+        "- 数字を使うチャート（stat / bar）は参考ニュース由来の実在する数字のみ。捏造禁止\n"
+        "- flow / list は投稿内容の構造化なので数字は不要。自由に作ってよい\n\n"
         "図解の品質ルール:\n"
         "- title は名詞形ではなく結論型にする（×「AI導入の実態」→ ○「AI導入企業の7割が売上増」）\n"
-        "- 数字は最大3つ。詰め込まない。1画像1メッセージ\n"
-        "- caption には必ず出典（ニュース媒体名など）を入れる\n\n"
+        "- 1画像1メッセージ。詰め込まない（数字は最大3つ、ステップ・項目は最大4つ）\n"
+        "- 数字系チャートの caption には必ず出典（ニュース媒体名など）を入れる\n"
+        "- 図解は投稿文の要約ではなく「投稿文を補完する構造」にする（投稿を読んで図解を保存したくなる関係）\n\n"
         "chart フォーマット（chart_type に応じて1つ選択）:\n\n"
         "① bar（棒グラフ）: 複数の数値を並べて比較\n"
         '   {"chart_type":"bar","title":"結論型タイトル","subtitle":"補足（任意）",'
@@ -634,6 +696,25 @@ def generate_posts_with_claude(
         '"left_label":"従来","right_label":"新手法",'
         '"left_items":["特徴1","特徴2"],"right_items":["特徴1","特徴2"],'
         '"caption":"出典（任意）"}\n\n'
+        "④ flow（プロセス・流れ）: 原因→仮説→対策→次の一歩、手順のステップなど\n"
+        "   label は6文字以内（「原因」「仮説」「対策」「次の一歩」「STEP1」など）\n"
+        "   text は28文字以内で言い切る。説明は投稿文に任せ、図解は骨組みだけにする。steps は2〜4個\n"
+        "   各 text の中で最も重要なフレーズを1つだけ【】で囲むこと（図解上で金色の太字になる）\n"
+        "   impact には読者への行動提案を1文（30文字以内・任意）\n"
+        '   {"chart_type":"flow","title":"結論型タイトル","subtitle":"補足（任意）",'
+        '"steps":[{"label":"原因","text":"反応が悪いのは【1行目】の問題"},'
+        '{"label":"仮説","text":"TLでは【1行目しか読まれない】"},'
+        '{"label":"対策","text":"【数字か意外性】で書き出す"},'
+        '{"label":"次の一歩","text":"過去投稿の1行目を書き直す"}],'
+        '"impact":"1行目を変えるだけで反応は2倍変わる","caption":"出典（任意）"}\n\n'
+        "⑤ list（ポイント解説）: コツ・チェックリスト・要点まとめ\n"
+        "   head は12文字以内の見出し、text は28文字以内の補足。items は3〜4個\n"
+        "   text の中で最も重要なフレーズを1つだけ【】で囲むこと（図解上で金色の太字になる）\n"
+        '   {"chart_type":"list","title":"結論型タイトル","subtitle":"補足（任意）",'
+        '"items":[{"head":"完璧を目指さない","text":"【6割の出来】で投稿し反応から学ぶ"},'
+        '{"head":"数字を1つ入れる","text":"数字は【信頼と保存率】を上げる"},'
+        '{"head":"問いかけで締める","text":"リプライは【アルゴリズム評価が最大】"}],'
+        '"impact":"まず1つだけ今日の投稿で試す","caption":"出典（任意）"}\n\n'
         "【媒体別の書き分け — 各投稿につきX版とThreads版の2つを書く】\n"
         "XとThreadsはアルゴリズムも文化も別物です。同じ内容を、それぞれに最適化して書き分けてください。\n\n"
         "X版（text）:\n"
