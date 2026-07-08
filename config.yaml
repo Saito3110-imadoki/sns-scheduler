@@ -11,12 +11,13 @@ company:
 
 # ── ブランドカラー・ロゴ設定 ──────────────────────────────
 # 生成される画像（インフォグラフィック）のデザインを自社カラーに変更できます。
+# ※ 画像は白背景のため、白の上でも読める「濃いめの色」を指定してください。
 branding:
   # グラフ・枠線・アクティブ要素のメインカラー
-  primary_color: "#6366f1"   # 例: "#0ea5e9"（空色）"#10b981"（緑）"#8b5cf6"（紫）
+  primary_color: "#4f46e5"   # 例: "#0369a1"（濃い青）"#047857"（濃い緑）"#7c3aed"（濃い紫）
 
   # 数値・ハイライト・アクセントカラー
-  accent_color: "#fbbf24"    # 例: "#f97316"（オレンジ）"#ec4899"（ピンク）"#facc15"（黄）
+  accent_color: "#d97706"    # 例: "#ea580c"（濃いオレンジ）"#be185d"（濃いピンク）
 
   # ロゴ画像のURL（空白=会社名テキストを表示）
   # 例: "https://example.com/logo.png"
@@ -117,17 +118,17 @@ notion:
     platform: 媒体
     status: ステータス
     image_url: 画像URL
+    # カルーセル（複数枚スライド）用。改行区切りで全画像URLを保存。未作成でも動作します
+    image_urls: 画像URL一覧
     # 自動投稿後に記録される投稿ID
     tweet_id: X投稿ID
     threads_post_id: Threads投稿ID
     # 毎日22時に自動計測されるエンゲージメント指標
     likes: いいね数
     retweets: RT数
-    replies: リプライ数
     impressions: インプレッション
     threads_likes: Threadsいいね数
     threads_views: Threads閲覧数
-    analytics_date: 計測日時
   status:
     pending: 承認待ち
     done: 投稿済
