@@ -7,18 +7,18 @@ import re
 from pathlib import Path
 import html as _h
 
-# ── カラーパレット ──────────────────────────────────────────
-_BG       = "#0f172a"   # slate-900
-_SURFACE  = "#1e293b"   # slate-800
-_CARD     = "#0b1628"   # deep blue-dark
-_BORDER   = "#334155"   # slate-700
-_MAIN     = "#6366f1"   # indigo-500
-_ACCENT   = "#fbbf24"   # amber-400
-_GREEN    = "#34d399"   # emerald-400
-_TEXT     = "#f1f5f9"   # slate-100
-_MUTED    = "#64748b"   # slate-500
-_IMP_BG   = "#1c1400"
-_IMP_BD   = "#92400e"
+# ── カラーパレット（白背景ライトテーマ）──────────────────────
+_BG       = "#ffffff"   # 純白の背景
+_SURFACE  = "#f1f5f9"   # slate-100（薄いグレー面）
+_CARD     = "#f8fafc"   # slate-50（カード背景）
+_BORDER   = "#e2e8f0"   # slate-200（罫線）
+_MAIN     = "#4f46e5"   # indigo-600（白背景で映える濃い青紫）
+_ACCENT   = "#d97706"   # amber-600（白背景でも読める濃いオレンジ）
+_GREEN    = "#059669"   # emerald-600
+_TEXT     = "#0f172a"   # slate-900（ほぼ黒）
+_MUTED    = "#64748b"   # slate-500（補足テキスト）
+_IMP_BG   = "#fffbeb"   # amber-50（インパクト帯の背景）
+_IMP_BD   = "#fcd34d"   # amber-300（インパクト帯の枠）
 
 W, H = 1200, 630
 
@@ -39,25 +39,25 @@ def _hl(s: object) -> str:
 
 # ── SVGアイコン（lucide-react準拠のSVGパス）────────────────
 _ICON_ZAP = """<svg width="42" height="42" viewBox="0 0 24 24" fill="none"
-  stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
 </svg>"""
 
 _ICON_COINS = """<svg width="42" height="42" viewBox="0 0 24 24" fill="none"
-  stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <circle cx="8" cy="8" r="6"/>
   <path d="M18.09 10.37A6 6 0 1 1 10.34 18"/>
   <path d="M7 6h1v4"/><path d="M16.71 13.88l1 1-2 1.99"/>
 </svg>"""
 
 _ICON_TRENDING = """<svg width="42" height="42" viewBox="0 0 24 24" fill="none"
-  stroke="#fbbf24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+  stroke="#d97706" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
   <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
   <polyline points="17 6 23 6 23 12"/>
 </svg>"""
 
 _ICON_ROCKET = """<svg width="42" height="42" viewBox="0 0 24 24" fill="none"
-  stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M12 2s-4.5 4-4.5 10c0 2.49 2.01 4.5 4.5 4.5s4.5-2.01 4.5-4.5C16.5 6 12 2 12 2z"/>
   <path d="M8.5 14.5L6 17M15.5 14.5L18 17"/>
   <path d="M5 17c-1 1-1 2.5 0 2.5h14c0-1.5-1-2.5-2-3"/>
@@ -181,7 +181,7 @@ def _html_stat(chart: dict) -> str:
 <div style="flex:1;background:{_CARD};border:2px solid {_MAIN};border-radius:18px;
   padding:28px 20px 24px;text-align:center;position:relative;overflow:hidden;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
-  box-shadow:0 0 30px rgba(99,102,241,0.25),inset 0 1px 0 rgba(255,255,255,0.05);">
+  box-shadow:0 2px 10px rgba(15,23,42,0.06);">
   <!-- グラデーション上部バー -->
   <div style="position:absolute;top:0;left:20px;right:20px;height:4px;
     background:linear-gradient(90deg,{_ACCENT},{_MAIN});border-radius:0 0 4px 4px;"></div>
@@ -190,7 +190,7 @@ def _html_stat(chart: dict) -> str:
   {ctx_html}
   <!-- 数値 -->
   <div style="font-size:{vsize};font-weight:900;color:{_ACCENT};line-height:1;
-    letter-spacing:-2px;text-shadow:0 0 40px rgba(251,191,36,0.4);">{_e(val)}</div>
+    letter-spacing:-2px;">{_e(val)}</div>
   <!-- ラベル -->
   <div style="font-size:15px;color:{_TEXT};margin-top:14px;font-weight:600;
     line-height:1.5;max-width:180px;">{_e(label)}</div>
@@ -253,7 +253,7 @@ def _html_comparison(chart: dict) -> str:
         dot_c   = _MAIN if active else _MUTED
         txt_c   = _TEXT if active else _MUTED
         lbl_c   = _MAIN if active else _MUTED
-        shadow  = f";box-shadow:0 0 28px rgba(99,102,241,0.2)" if active else ""
+        shadow  = f";box-shadow:0 2px 10px rgba(15,23,42,0.06)" if active else ""
         rows    = "".join(
             f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
             f'<div style="width:8px;height:8px;border-radius:50%;background:{dot_c};flex-shrink:0;"></div>'
@@ -307,7 +307,7 @@ def _html_flow(chart: dict) -> str:
         is_last = (i == n - 1)
         # 最後のステップ（次の一歩）はアクセントカラーで強調
         chip_bg = _ACCENT if is_last else _MAIN
-        chip_fg = "#1a1200" if is_last else "#ffffff"
+        chip_fg = "#ffffff"
         border  = _ACCENT if is_last else _BORDER
 
         rows.append(f"""
@@ -385,10 +385,36 @@ def _html_list(chart: dict) -> str:
 {_impact_footer(impact, caption)}""")
 
 
+# ── ページバッジ（カルーセル用）──────────────────────────
+def _apply_page_badge(html: str, page: tuple | None, role: str = "") -> str:
+    """複数枚スライドのとき右上に「起 1 / 4」バッジを付ける。
+    role には起承転結のいずれかが入る。1枚目にはスワイプを促す矢印も添える。"""
+    if not page or page[1] <= 1:
+        return html
+    cur, total = page
+    arrow = "&nbsp;→" if cur == 1 else ""
+    role_html = (
+        f'<span style="color:#ffffff;background:{_MAIN};border-radius:999px;'
+        f'padding:3px 12px;margin-right:12px;font-size:15px;">{_e(role)}</span>'
+    ) if role else ""
+    badge = (
+        f'<div style="position:absolute;top:18px;right:28px;display:flex;'
+        f'align-items:center;background:rgba(15,23,42,0.05);'
+        f'border:1px solid {_BORDER};border-radius:999px;'
+        f'padding:6px 18px 6px {("8px" if role else "18px")};'
+        f'font-size:16px;font-weight:800;'
+        f'color:{_TEXT};letter-spacing:1px;z-index:99;">'
+        f'{role_html}{cur} / {total}{arrow}</div>'
+    )
+    return html.replace("</div>\n</body>", f"{badge}\n</div>\n</body>")
+
+
 # ── メイン描画関数 ────────────────────────────────────────
 def generate_infographic(chart: dict, output_path: Path,
-                         branding: dict | None = None) -> bool:
-    """HTMLをplaywrightでレンダリングしPNG保存。失敗時はFalse"""
+                         branding: dict | None = None,
+                         page: tuple | None = None) -> bool:
+    """HTMLをplaywrightでレンダリングしPNG保存。失敗時はFalse
+    page=(現在ページ, 総ページ数) を渡すとカルーセル用バッジを表示"""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -409,6 +435,7 @@ def generate_infographic(chart: dict, output_path: Path,
         return False
 
     html = _apply_branding(html, branding or {})
+    html = _apply_page_badge(html, page, role=str(chart.get("role", "")).strip())
 
     try:
         output_path.parent.mkdir(parents=True, exist_ok=True)
