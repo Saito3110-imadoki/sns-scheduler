@@ -11,6 +11,7 @@
 import os
 import sys
 import json
+import time
 import warnings
 import feedparser
 import tweepy
@@ -35,6 +36,12 @@ try:
 except Exception as _e:
     print(f"[infographic] import失敗: {type(_e).__name__}: {_e}")
     _HAS_WEB_RENDERER = False
+
+try:
+    from notify import notify_error
+except Exception:
+    def notify_error(context: str, detail: str) -> None:  # フォールバック
+        pass
 
 warnings.filterwarnings('ignore')
 load_dotenv()
@@ -569,13 +576,54 @@ def fetch_performance_insights(max_posts: int = 20) -> str:
         return ""
 
 
+# ── Claude API 共通ヘルパー ───────────────────────────────
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+
+
+def _claude_call(prompt: str, max_tokens: int, retries: int = 3) -> str:
+    """Claude APIを呼び出してテキストを返す。一時エラーは指数バックオフで再試行"""
+    ai_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    delays    = [5, 15, 30]
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            message = ai_client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return message.content[0].text.strip()
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1:
+                wait = delays[min(attempt, len(delays) - 1)]
+                print(f"  Claude APIエラー（{attempt+1}/{retries}回目）: "
+                      f"{type(e).__name__} → {wait}秒後に再試行")
+                time.sleep(wait)
+    raise last_err  # 全リトライ失敗
+
+
+def _parse_json_array(raw: str) -> list:
+    """Claudeの出力からJSON配列を取り出す。失敗時は空リスト"""
+    if "```json" in raw:
+        raw = raw.split("```json")[1].split("```")[0].strip()
+    elif "```" in raw:
+        raw = raw.split("```")[1].split("```")[0].strip()
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"  JSON解析エラー: {e}")
+        print(f"  Claude出力: {raw[:300]}")
+        return []
+
+
 # ── Claude AI 投稿生成 ────────────────────────────────────
 def generate_posts_with_claude(
     news_items: list[str], trending: list[str], count: int = 5,
     insights: str = "", weekday_ja: str = "", daily_focus: str = "",
     recent_themes: list[str] | None = None,
 ) -> list[dict]:
-    ai_client  = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     news_text  = "\n".join(f"・{item}" for item in news_items) or "（情報なし）"
     trend_text = "\n".join(f"・{t}" for t in trending) or "（情報なし）"
 
@@ -771,24 +819,53 @@ def generate_posts_with_claude(
         "]"
     )
 
-    message = ai_client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=13000,
-        messages=[{"role": "user", "content": prompt}],
+    raw = _claude_call(prompt, max_tokens=13000)
+    return _parse_json_array(raw)
+
+
+# ── 編集長レビュー（2パス目）──────────────────────────────
+def review_posts_with_claude(posts: list[dict],
+                             news_items: list[str]) -> list[dict]:
+    """生成済み投稿を「編集長」として審査し、弱い投稿を書き直す。
+    レビューに失敗した場合は元の投稿をそのまま返す（投稿ゼロは絶対に避ける）。"""
+    news_text  = "\n".join(f"・{item}" for item in news_items) or "（情報なし）"
+    posts_json = json.dumps(posts, ensure_ascii=False, indent=1)
+
+    prompt = (
+        "あなたはSNS運用歴10年の編集長です。ライターが書いた投稿案を出稿前に最終審査し、"
+        "弱い投稿だけを書き直してください。\n\n"
+        f"【参考ニュース（数字の根拠確認用）】\n{news_text}\n\n"
+        f"【投稿案（JSON）】\n{posts_json}\n\n"
+        "【審査基準】\n"
+        "1. フック: 1行目だけ読んで手が止まるか。弱ければ1行目を書き直す"
+        "（挨拶・「〜と思います」・抽象的な問いかけで始まる投稿は失格）\n"
+        "2. 具体性: 抽象論で終わっていないか。数字・手順・固有名詞が入っているか\n"
+        "3. 行動理由: 読者が「保存」か「リプライ」をしたくなる要素が明確か\n"
+        "4. 数字の根拠: 参考ニュースにない統計数字は削除するか、ニュースにある数字に差し替える\n"
+        "5. Threads版: 450文字以内で、X版のコピペになっていないか（口調が会話調に変わっているか）\n"
+        "6. 図解: title が結論型か。flow/list のテキストが簡潔か（28文字以内）\n\n"
+        "【絶対に守るルール】\n"
+        "- JSONの構造・キー名は変えない（text, text_threads, reply, type, theme, needs_image, charts, role など）\n"
+        "- 投稿の件数を増減させない。順番も変えない\n"
+        "- 良い投稿はそのまま残す。全部を書き直す必要はない\n"
+        "- 各投稿に \"edited\" フィールド（true/false）を追加し、書き直した場合のみ true にする\n\n"
+        "審査後の全投稿を、入力と同じJSON配列形式のみで出力してください（説明文不要）:"
     )
 
-    raw = message.content[0].text.strip()
-    if "```json" in raw:
-        raw = raw.split("```json")[1].split("```")[0].strip()
-    elif "```" in raw:
-        raw = raw.split("```")[1].split("```")[0].strip()
-
     try:
-        return json.loads(raw)
+        raw      = _claude_call(prompt, max_tokens=13000)
+        reviewed = _parse_json_array(raw)
+        # 検証: 件数一致・全件にtextがあること。壊れていたら元を使う
+        if (len(reviewed) == len(posts)
+                and all(isinstance(p, dict) and p.get("text") for p in reviewed)):
+            edited = sum(1 for p in reviewed if p.get("edited"))
+            print(f"  編集長レビュー: {edited}件を改稿 / {len(reviewed)}件中")
+            return reviewed
+        print("  編集長レビュー: 出力が不正のため原稿をそのまま使用")
+        return posts
     except Exception as e:
-        print(f"  JSON解析エラー: {e}")
-        print(f"  Claude出力: {raw[:300]}")
-        return []
+        print(f"  編集長レビュー: スキップ（{type(e).__name__}: {e}）")
+        return posts
 
 
 # ── Notion 保存 ───────────────────────────────────────────
@@ -925,16 +1002,29 @@ def run():
 
     posts_per_day = _cfg("content", "posts_per_day", default=5)
     print("Claude AIで投稿文生成中...")
-    posts = generate_posts_with_claude(news, trending, count=posts_per_day,
-                                       insights=insights,
-                                       weekday_ja=weekday_ja,
-                                       daily_focus=daily_focus,
-                                       recent_themes=recent_themes)
+    try:
+        posts = generate_posts_with_claude(news, trending, count=posts_per_day,
+                                           insights=insights,
+                                           weekday_ja=weekday_ja,
+                                           daily_focus=daily_focus,
+                                           recent_themes=recent_themes)
+    except Exception as e:
+        notify_error("投稿生成（daily_generator.py）",
+                     f"Claude API呼び出しが全リトライ失敗: {e}")
+        print(f"投稿の生成に失敗しました: {e}", file=sys.stderr)
+        sys.exit(1)
     print(f"  生成: {len(posts)}件")
 
     if not posts:
+        notify_error("投稿生成（daily_generator.py）",
+                     "生成結果が空でした（JSON解析失敗の可能性）")
         print("投稿の生成に失敗しました", file=sys.stderr)
         sys.exit(1)
+
+    # 編集長レビュー（config で editor_review: false にすると無効化できる）
+    if _cfg("content", "editor_review", default=True):
+        print("編集長レビュー中...")
+        posts = review_posts_with_claude(posts, news)
 
     # 画像生成（charts配列 = カルーセル対応。旧形式の chart 単体も受け付ける）
     image_urls: dict = {}

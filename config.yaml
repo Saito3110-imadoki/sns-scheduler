@@ -37,6 +37,10 @@ content:
   # 1日に生成する投稿数
   posts_per_day: 5
 
+  # 編集長レビュー（2パス目のAI審査）。弱いフックや根拠のない数字を出稿前に自動修正。
+  # API利用量が約2倍になるため、不要なら false に
+  editor_review: true
+
   # 投稿文字数（文字）
   post_length_min: 200
   post_length_max: 400
