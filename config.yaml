@@ -41,9 +41,10 @@ content:
   # API利用量が約2倍になるため、不要なら false に
   editor_review: true
 
-  # 投稿文字数（文字）
-  post_length_min: 200
-  post_length_max: 400
+  # 投稿文字数（文字）※X Premium加入済み。インプレッションが最も伸びる帯に設定
+  # Xのアルゴリズムは「滞在時間」を評価するため、読み応えのある長文が有利
+  post_length_min: 280
+  post_length_max: 500
 
   # ハッシュタグ数・絵文字数の上限
   hashtags_per_post: 1
