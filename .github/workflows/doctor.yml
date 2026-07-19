@@ -1,0 +1,44 @@
+name: Doctor (事前チェック)
+
+# 本番投入の前に、各サービスの認証情報が正しいかを実際にAPIへpingして検証する。
+# Actionsタブ →「Doctor (事前チェック)」→ Run workflow で手動実行。
+# ログに ✅/❌ で結果が出る。1つでも❌があればワークフローは失敗（赤）になる。
+
+on:
+  workflow_dispatch:
+
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: sns_scheduler/requirements.txt
+
+      - name: 依存ライブラリのインストール
+        run: pip install -r sns_scheduler/requirements.txt
+
+      - name: 事前チェック実行
+        env:
+          NOTION_TOKEN:                ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID:          ${{ secrets.NOTION_DATABASE_ID }}
+          X_API_KEY:                   ${{ secrets.X_API_KEY }}
+          X_API_KEY_SECRET:            ${{ secrets.X_API_KEY_SECRET }}
+          X_ACCESS_TOKEN:              ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET:       ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
+          LINE_CHANNEL_ACCESS_TOKEN:   ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID:                ${{ secrets.LINE_USER_ID }}
+          LINE_USER_ID2:               ${{ secrets.LINE_USER_ID2 }}
+          THREADS_USER_ID:             ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN:        ${{ secrets.THREADS_ACCESS_TOKEN }}
+        run: python sns_scheduler/doctor.py
