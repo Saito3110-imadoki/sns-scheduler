@@ -1,0 +1,82 @@
+name: Report (週次・月次レポート)
+
+# Notionの投稿実績を集計し、PDF/画像レポートを生成してGitHub Pagesに保存、
+# LINEへ「サマリー + レポート画像 + PDFリンク」を配信する。
+# ・週次: 毎週月曜 8:00 JST（直近7日間）
+# ・月次: 毎月1日 9:00 JST（前月分）
+# レイアウト自動判定つき: sns_scheduler/ 配下でもリポジトリ直下でも動く。
+
+on:
+  schedule:
+    - cron: "0 23 * * 0"   # 月曜 8:00 JST = 日曜 23:00 UTC → weekly
+    - cron: "0 0 1 * *"    # 毎月1日 9:00 JST = 1日 0:00 UTC → monthly
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "レポート種別"
+        type: choice
+        options: [weekly, monthly]
+        default: weekly
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write  # レポート(PDF/PNG)をリポジトリにコミットするため
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: レイアウト判定（sns_scheduler/ or ルート直下）
+        run: |
+          if [ -f sns_scheduler/report.py ]; then
+            echo "BASE=sns_scheduler/" >> "$GITHUB_ENV"
+          else
+            echo "BASE=" >> "$GITHUB_ENV"
+          fi
+
+      - name: 依存ライブラリのインストール
+        run: |
+          pip install -r "${BASE}requirements.txt"
+          playwright install chromium --with-deps
+
+      - name: レポート種別の判定
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "0 0 1 * *" ]; then
+            echo "mode=monthly" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=weekly" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: レポート生成（PDF/PNG + AI分析）
+        env:
+          NOTION_TOKEN:                ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID:          ${{ secrets.NOTION_DATABASE_ID }}
+          ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
+          THREADS_USER_ID:             ${{ secrets.THREADS_USER_ID }}
+          THREADS_ACCESS_TOKEN:        ${{ secrets.THREADS_ACCESS_TOKEN }}
+        run: python "${BASE}report.py" --mode ${{ steps.mode.outputs.mode }} --phase render
+
+      - name: レポートをリポジトリにコミット（Pages公開用）
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add reports/*.pdf reports/*.png
+          git diff --cached --quiet || git commit -m "chore: レポート追加 ($(date +%Y-%m-%d))"
+          git push || true
+
+      - name: LINE配信（Pages公開を待ってから送信）
+        env:
+          LINE_CHANNEL_ACCESS_TOKEN:   ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID:                ${{ secrets.LINE_USER_ID }}
+          LINE_USER_ID2:               ${{ secrets.LINE_USER_ID2 }}
+        run: python "${BASE}report.py" --phase send
