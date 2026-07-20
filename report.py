@@ -307,12 +307,48 @@ def ai_insights(data: dict) -> dict:
             except json.JSONDecodeError as je:
                 print(f"  AI分析: JSONパース失敗（{attempt}回目）: {je}")
                 continue
+            parsed = _normalize_insights(parsed)
             if parsed.get("analysis") and parsed.get("next_actions"):
                 print(f"  AI分析: 生成完了（{model}）")
                 return parsed
     except Exception as e:
         print(f"  AI分析スキップ（ルールベースで代替）: {e}")
     return fallback
+
+
+def _normalize_insights(parsed: dict) -> dict:
+    """AI出力のキー揺れ・型揺れを吸収して、描画側が期待する形に整える。"""
+    def _s(v) -> str:
+        return str(v).strip() if v is not None else ""
+
+    analysis = [ _s(a) for a in (parsed.get("analysis") or []) if _s(a) ]
+
+    actions = []
+    for a in (parsed.get("next_actions") or []):
+        if isinstance(a, str):
+            actions.append({"title": _s(a)[:24], "detail": _s(a)})
+        elif isinstance(a, dict):
+            title  = _s(a.get("title") or a.get("action") or a.get("name"))
+            detail = _s(a.get("detail") or a.get("description") or a.get("body") or a.get("text"))
+            if title or detail:
+                actions.append({"title": title or detail[:24], "detail": detail})
+
+    themes = []
+    for t in (parsed.get("theme_ideas") or []):
+        if isinstance(t, str):
+            themes.append({"title": _s(t), "reason": ""})
+        elif isinstance(t, dict):
+            title = _s(t.get("title") or t.get("theme") or t.get("idea"))
+            if title:
+                themes.append({"title": title, "reason": _s(t.get("reason") or t.get("why"))})
+
+    return {
+        "analysis": analysis,
+        "win_pattern":  _s(parsed.get("win_pattern")),
+        "lose_pattern": _s(parsed.get("lose_pattern")),
+        "theme_ideas":  themes,
+        "next_actions": actions,
+    }
 
 
 def _rule_based_insights(data: dict) -> dict:
@@ -439,11 +475,11 @@ def build_html(data: dict, ins: dict) -> str:
             c += f'<div class="aud-col"><h4>時間帯別 平均表示</h4>{_bars([{"label": t["label"], "value": t["avg"]} for t in pat["timeslot"]], suffix="")}</div>'
         pattern_html = f'<div class="aud-grid">{c}</div>'
 
-    analysis_html = "".join(f"<li>{a}</li>" for a in ins["analysis"])
+    analysis_html = "".join(f"<li>{a}</li>" for a in ins.get("analysis", []))
     actions_html = "".join(
         f'<div class="action"><div class="a-num">{i+1}</div>'
-        f'<div><div class="a-t">{a["title"]}</div><div class="a-d">{a["detail"]}</div></div></div>'
-        for i, a in enumerate(ins["next_actions"]))
+        f'<div><div class="a-t">{a.get("title", "")}</div><div class="a-d">{a.get("detail", "")}</div></div></div>'
+        for i, a in enumerate(ins.get("next_actions", [])))
 
     # 勝ち/負けパターン
     winlose_html = ""
@@ -461,7 +497,7 @@ def build_html(data: dict, ins: dict) -> str:
     themes_html = ""
     if ins.get("theme_ideas"):
         items = "".join(
-            f'<div class="theme"><div class="th-t">💡「{t["title"]}」</div>'
+            f'<div class="theme"><div class="th-t">💡「{t.get("title", "")}」</div>'
             f'<div class="th-r">{t.get("reason", "")}</div></div>'
             for t in ins["theme_ideas"][:3])
         themes_html = f'<h2>来週の投稿テーマ案（AI提案）</h2><div class="themes">{items}</div>'
