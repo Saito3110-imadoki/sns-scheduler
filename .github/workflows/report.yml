@@ -71,8 +71,14 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add reports/*.pdf reports/*.png
-          git diff --cached --quiet || git commit -m "chore: レポート追加 ($(date +%Y-%m-%d))"
-          git push || true
+          git diff --cached --quiet && exit 0 || git commit -m "chore: レポート追加 ($(date +%Y-%m-%d))"
+          # 他ワークフローの並行pushで拒否されることがあるため、rebaseしながら最大4回リトライ
+          for i in 1 2 3 4; do
+            git pull --rebase && git push && exit 0
+            echo "push retry $i"; sleep $((5 * i))
+          done
+          echo "::error::レポートのpushに失敗しました（Pages公開されないためLINEはテキストのみになります）"
+          exit 1
 
       - name: LINE配信（Pages公開を待ってから送信）
         env:
