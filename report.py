@@ -757,7 +757,11 @@ def phase_render(mode: str, demo: bool = False):
     data = demo_data() if demo else gather(mode)
     ins  = ai_insights(data) if not demo else demo_insights()
     REPORT_DIR.mkdir(exist_ok=True)
-    base = REPORT_DIR / f"{data['date']}_{data['mode']}"
+    # 実行時刻をファイル名に含めて毎回ユニークにする。同名だと再実行時に
+    # 「古いファイルが既にPagesに存在→デプロイ待ちが即通過→旧画像を配信」
+    # となり、LINE側の画像キャッシュも効いて新しい内容が届かない。
+    stamp = datetime.now(JST).strftime("%H%M")
+    base = REPORT_DIR / f"{data['date']}_{data['mode']}_{stamp}"
     pdf_path, png_path = render_files(build_html(data, ins), base)
     png_url, pdf_url = page_urls(base.name)
     message = build_digest(data, pdf_url)
