@@ -291,16 +291,25 @@ def ai_insights(data: dict) -> dict:
             "}\n"
             "条件: 実データの数字・実在の投稿を根拠に語る／一般論やどのアカウントにも言える話は禁止／"
             "theme_ideasは実際に伸びた投稿の系統から発想し、タイトルはそのまま使える具体性にする／"
-            "専門用語を避ける／断定しすぎない"
+            "専門用語を避ける／断定しすぎない／"
+            "文字列の中で半角のダブルクォート(\")は使わず、引用符は「」を使う"
         )
-        msg = client.messages.create(model=model, max_tokens=1600,
-                                     messages=[{"role": "user", "content": prompt}])
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-        m = re.search(r"\{.*\}", text, re.S)
-        parsed = json.loads(m.group(0)) if m else {}
-        if parsed.get("analysis") and parsed.get("next_actions"):
-            print(f"  AI分析: 生成完了（{model}）")
-            return parsed
+        # 出力JSONが崩れることがあるため、パース失敗時は1回だけ再生成する
+        for attempt in (1, 2):
+            msg = client.messages.create(model=model, max_tokens=1600,
+                                         messages=[{"role": "user", "content": prompt}])
+            text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
+            m = re.search(r"\{.*\}", text, re.S)
+            if not m:
+                continue
+            try:
+                parsed = json.loads(m.group(0))
+            except json.JSONDecodeError as je:
+                print(f"  AI分析: JSONパース失敗（{attempt}回目）: {je}")
+                continue
+            if parsed.get("analysis") and parsed.get("next_actions"):
+                print(f"  AI分析: 生成完了（{model}）")
+                return parsed
     except Exception as e:
         print(f"  AI分析スキップ（ルールベースで代替）: {e}")
     return fallback
