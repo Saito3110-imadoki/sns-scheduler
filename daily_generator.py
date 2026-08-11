@@ -38,6 +38,11 @@ except Exception as _e:
     _HAS_WEB_RENDERER = False
 
 try:
+    import ai_image
+except Exception as _e:
+    ai_image = None
+
+try:
     from notify import notify_error
 except Exception:
     def notify_error(context: str, detail: str) -> None:  # フォールバック
@@ -72,8 +77,8 @@ def _cfg(*keys, default=None):
             return default
     return node
 
-NOTION_TOKEN       = os.environ["NOTION_TOKEN"]
-NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+NOTION_TOKEN       = os.environ["NOTION_TOKEN"].strip()
+NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"].strip()
 
 PROP_TEXT         = _cfg("notion", "properties", "text",         default="投稿文")
 PROP_THREADS_TEXT = _cfg("notion", "properties", "threads_text", default="Threads用文面")
@@ -423,7 +428,13 @@ def fetch_rss_news(max_items: int = 12) -> list[str]:
     return items[:max_items]
 
 
-def fetch_trending_tweets(max_tweets: int = 6) -> list[str]:
+def fetch_trending_tweets(max_tweets: int = 12) -> list[dict]:
+    """伸びている参考投稿を、本文全文＋エンゲージメント実数つきで収集する。
+    数字を添えることで「なぜ伸びたか」をAIが学習できるようにする。
+    config の topics.benchmark_accounts を指定すると、そのアカウントの
+    投稿も参考ソースに加える（業界の勝ちパターンを継続学習）。"""
+    keywords   = X_KEYWORDS[:4]
+    benchmarks = _cfg("topics", "benchmark_accounts", default=[]) or []
     try:
         client = tweepy.Client(
             consumer_key=os.environ["X_API_KEY"],
@@ -431,36 +442,98 @@ def fetch_trending_tweets(max_tweets: int = 6) -> list[str]:
             access_token=os.environ["X_ACCESS_TOKEN"],
             access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
         )
-        tweets = []
-        for keyword in X_KEYWORDS[:2]:
-            query = f"{keyword} lang:ja -is:retweet min_faves:50"
-            response = client.search_recent_tweets(
-                query=query, max_results=5,
-                tweet_fields=["public_metrics", "text"],
-                sort_order="relevancy",
-            )
-            if response.data:
-                for tweet in response.data:
-                    tweets.append(tweet.text[:150])
-        return tweets[:max_tweets]
+
+        def _search(query: str) -> list[dict]:
+            out = []
+            try:
+                resp = client.search_recent_tweets(
+                    query=query, max_results=10,
+                    tweet_fields=["public_metrics", "text"],
+                    sort_order="relevancy", user_auth=True,
+                )
+            except Exception as e:
+                print(f"  検索スキップ（{query}）: {e}")
+                return out
+            for tw in (resp.data or []):
+                m = tw.public_metrics or {}
+                out.append({
+                    "text":  tw.text,                      # 全文（構成を学ぶため切らない）
+                    "likes": m.get("like_count", 0),
+                    "rts":   m.get("retweet_count", 0),
+                    "reps":  m.get("reply_count", 0),
+                    "imp":   m.get("impression_count", 0),
+                })
+            return out
+
+        collected: list[dict] = []
+        # キーワード検索。反応の高い投稿から集めたいので min_faves を段階的に緩める
+        for kw in keywords:
+            hits = []
+            for min_faves in (100, 30):
+                hits = _search(f"{kw} lang:ja -is:retweet -is:reply min_faves:{min_faves}")
+                if hits:
+                    break
+            collected.extend(hits)
+        # ベンチマークアカウント（業界の手本）
+        for acct in benchmarks[:3]:
+            handle = str(acct).lstrip("@")
+            collected.extend(_search(f"from:{handle} -is:retweet -is:reply"))
+
+        # 重複排除＋エンゲージメント順（RT重視）で上位を採用
+        seen, uniq = set(), []
+        for t in collected:
+            key = t["text"][:60]
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append(t)
+        uniq.sort(key=lambda t: t["rts"] * 5 + t["likes"] * 2 + t["reps"] * 3,
+                  reverse=True)
+        return uniq[:max_tweets]
     except Exception as e:
         print(f"  X API検索スキップ: {e}")
         return []
 
 
-# ── 曜日別コンテンツフォーカス ────────────────────────────
-_WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-_WEEKDAY_JA   = ["月", "火", "水", "木", "金", "土", "日"]
-
-_DEFAULT_CALENDAR = {
-    "mon": "週初めの仕事モードに合わせて、今週すぐ使える実践ノウハウを厚めに",
-    "tue": "データ・数字を切り口にした発見系。図解映えするテーマを優先",
-    "wed": "週の中だるみに刺さる「あるある」の言語化・共感系",
-    "thu": "実践ノウハウ強化。月曜と違う角度のテクニック・ツール活用",
-    "fri": "週末前のゆるい本音・失敗談。1週間の振り返りに絡めた学び",
-    "sat": "ライトなライフハック・意外な小ネタ。休日のながら読みに合う軽さ",
-    "sun": "明日からの1週間に向けた前向きな行動提案・モチベートで締める",
-}
+def analyze_winning_patterns(trending: list[dict]) -> str:
+    """伸びている参考投稿を分析し「今このジャンルで効いている型」を抽出する。
+    汎用ノウハウではなく直近の実データから型を学ぶための1パス。
+    失敗しても空文字を返し、生成処理は止めない。"""
+    if len(trending) < 3:
+        return ""
+    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        return ""
+    sample = "\n\n".join(
+        f"[いいね{t['likes']} / RT{t['rts']} / リプ{t['reps']}]\n{t['text']}"
+        for t in trending[:10])
+    try:
+        client = anthropic.Anthropic(api_key=key)
+        msg = client.messages.create(
+            model=CLAUDE_MODEL, max_tokens=700,
+            messages=[{"role": "user", "content": (
+                "あなたはSNSの分析官です。以下は、いま実際に伸びている投稿群です。"
+                "エンゲージメント数値と本文を照らし合わせ、"
+                "『いま このジャンルで効いている型』を抽出してください。\n\n"
+                f"{sample}\n\n"
+                "次の観点で、日本語の箇条書き5行以内にまとめてください:\n"
+                "・1行目（フック）に共通する言い回しや切り口\n"
+                "・本文の構成パターン（順序・情報の出し方）\n"
+                "・数字や固有名詞の使われ方\n"
+                "・読者のどの感情に触れているか\n"
+                "・リプライ/RTを誘発している要素\n"
+                "※内容の要約ではなく『再現できる型』として書くこと。前置き不要。")}],
+        )
+        text = "".join(b.text for b in msg.content
+                       if getattr(b, "type", "") == "text").strip()
+        if text:
+            print("  勝ちパターン分析: 完了")
+            return ("【いま伸びている投稿の型 — 実データ分析】\n" + text +
+                    "\nこの型を今日の投稿に適用すること。ただし文面の模倣は禁止、"
+                    "型のみを再現し、テーマは自社のものにする。")
+    except Exception as e:
+        print(f"  勝ちパターン分析スキップ: {e}")
+    return ""
 
 
 def get_daily_focus(now: datetime) -> tuple[str, str]:
@@ -523,7 +596,7 @@ def fetch_performance_insights(max_posts: int = 20) -> str:
         for page in resp.get("results", []):
             props = page["properties"]
             title = props.get(PROP_TEXT, {}).get("title", [])
-            text  = "".join(p["plain_text"] for p in title).replace("\n", " ")[:60]
+            text  = "".join(p["plain_text"] for p in title).replace("\n", " ")[:160]
             likes = props.get(PROP_LIKES, {}).get("number") or 0
             rts   = props.get(PROP_RETWEETS, {}).get("number") or 0
             imp   = props.get(PROP_IMPRESSIONS, {}).get("number") or 0
@@ -531,8 +604,9 @@ def fetch_performance_insights(max_posts: int = 20) -> str:
             ptype = sel.get("name", "")
             if text:
                 # RT > いいね > インプの順に重み付けした簡易スコア
+                er = round(likes / imp * 100, 1) if imp else 0.0
                 rows.append({"text": text, "likes": likes, "rts": rts,
-                             "imp": imp, "type": ptype,
+                             "imp": imp, "type": ptype, "er": er,
                              "score": rts * 5 + likes * 3 + imp * 0.01})
 
         if len(rows) < 3:
@@ -548,11 +622,11 @@ def fetch_performance_insights(max_posts: int = 20) -> str:
         ]
         for r in top:
             tmark = f"［{r['type']}］" if r["type"] else ""
-            lines.append(f"・{tmark}「{r['text']}…」→ いいね{r['likes']} / RT{r['rts']} / imp{r['imp']}")
+            lines.append(f"・{tmark}「{r['text']}…」→ いいね{r['likes']} / RT{r['rts']} / imp{r['imp']} / 反応率{r['er']}%")
         lines.append("▼ 伸びなかった投稿（同じパターンを避ける）:")
         for r in bottom:
             tmark = f"［{r['type']}］" if r["type"] else ""
-            lines.append(f"・{tmark}「{r['text']}…」→ いいね{r['likes']} / RT{r['rts']} / imp{r['imp']}")
+            lines.append(f"・{tmark}「{r['text']}…」→ いいね{r['likes']} / RT{r['rts']} / imp{r['imp']} / 反応率{r['er']}%")
 
         # タイプ別の平均いいね（タイプ情報がある場合のみ）
         by_type: dict = {}
@@ -620,12 +694,19 @@ def _parse_json_array(raw: str) -> list:
 
 # ── Claude AI 投稿生成 ────────────────────────────────────
 def generate_posts_with_claude(
-    news_items: list[str], trending: list[str], count: int = 5,
+    news_items: list[str], trending: list[dict], count: int = 5,
     insights: str = "", weekday_ja: str = "", daily_focus: str = "",
-    recent_themes: list[str] | None = None,
+    recent_themes: list[str] | None = None, patterns: str = "",
 ) -> list[dict]:
     news_text  = "\n".join(f"・{item}" for item in news_items) or "（情報なし）"
-    trend_text = "\n".join(f"・{t}" for t in trending) or "（情報なし）"
+    # 参考トレンドは「実数つき全文」で渡す。数字があることで
+    # AIが「どの型が伸びたか」を判断できる
+    if trending and isinstance(trending[0], dict):
+        trend_text = "\n\n".join(
+            f"［いいね{t['likes']} / RT{t['rts']} / リプ{t['reps']}］\n{t['text']}"
+            for t in trending) or "（情報なし）"
+    else:
+        trend_text = "\n".join(f"・{t}" for t in trending) or "（情報なし）"
 
     # タイプ配分: A=実践ノウハウ / B=データ図解 / C=気づき言語化 / D=本音失敗談
     n_b = 1 if count >= 2 else 0
@@ -640,6 +721,17 @@ def generate_posts_with_claude(
                            default="親しみやすい・専門用語なし・友達に話すような口調")
     post_min        = _cfg("content", "post_length_min", default=200)
     post_max        = _cfg("content", "post_length_max", default=400)
+    x_limit         = int(_cfg("content", "x_char_limit", default=0) or 0)
+    # 無料アカウント（x_limit>0）では超過分が途中で切れて公開されるため、
+    # 上限を絶対条件としてAIに伝える
+    if x_limit > 0:
+        length_rule = (
+            f"- 各投稿{post_min}〜{post_max}文字。⚠️上限は絶対条件。"
+            f"X無料アカウントのため、超過した投稿は途中でぶつ切りになって公開される。"
+            f"短くても薄くせず、1投稿=1メッセージに絞って必ず{post_max}文字以内に収めること\n"
+        )
+    else:
+        length_rule = f"- 各投稿{post_min}〜{post_max}文字\n"
     hashtags        = _cfg("content", "hashtags_per_post", default=1)
     emoji           = _cfg("content", "emoji_per_post", default=2)
     forbidden_list  = _cfg("content", "forbidden", default=[
@@ -652,6 +744,7 @@ def generate_posts_with_claude(
     topics_str     = "、".join(topics_list)
     company_str    = f"（{company_name}向け）" if company_name else ""
     insights_block = f"{insights}\n\n" if insights else ""
+    patterns_block = f"{patterns}\n\n" if patterns else ""
     dedup_block    = ""
     if recent_themes:
         theme_lines = "\n".join(f"・{t}…" for t in recent_themes)
@@ -677,6 +770,7 @@ def generate_posts_with_claude(
         f"【参考ニュース】\n{news_text}\n\n"
         f"【参考トレンド】\n{trend_text}\n\n"
         f"{insights_block}"
+        f"{patterns_block}"
         f"{dedup_block}"
         f"{focus_block}"
         "【投稿タイプと配分】\n"
@@ -703,12 +797,8 @@ def generate_posts_with_claude(
         "・ビフォーアフター:「フォロワー200人だった弊社アカウントが、3ヶ月で1万人になった話」\n"
         "禁止する書き出し: 挨拶 /「今日は〜についてお話しします」/「〜だと思います」/ 抽象的な問いかけ\n\n"
         "【本文のルール】\n"
-        f"- 各投稿{post_min}〜{post_max}文字。Xのアルゴリズムは「読む時間（滞在時間）」を評価するため、\n"
-        f"  薄い短文より、読み応えのある長文の方がインプレッションが伸びる。{post_min}文字を下回らないこと\n"
-        "- ただし「長いだけ」は最悪。1文ごとに新しい情報・具体例・気づきを足し、最後まで飽きさせない\n"
-        "- 構成の型: ①フック（1行目）→ ②共感や前提（そうそう、と思わせる）→ ③具体的な中身（手順・数字・事例）\n"
-        "  → ④一段深い視点や逆説（へえ、と思わせる）→ ⑤締め（保存促し or 問いかけ）\n"
-        "- 1〜2文ごとに空行で改行し、スマホで読んだときの視覚的リズムを作る（長文ほど改行が命）\n"
+        f"{length_rule}"
+        "- 1〜2文ごとに改行し、スマホで読んだときの視覚的リズムを作る\n"
         "- 抽象語（「効率化」「活用」だけ等）で終わらせず、必ず具体的な数字・手順・固有名詞を入れる\n"
         "- 専門用語は中学生にもわかる言葉に置き換える\n"
         f"- 絵文字は{emoji}個まで\n"
@@ -806,12 +896,15 @@ def generate_posts_with_claude(
         "1. 1行目だけ読んで、続きが読みたくなるか？\n"
         "2. この投稿を読んだ人が「保存」か「リプライ」をする理由が明確か？\n"
         "3. 数字はすべて参考ニュースに実在するか？\n"
-        f"4. X版は{post_min}文字以上あり、かつ最後まで飽きずに読める内容か（長いだけの水増しになっていないか）？\n"
-        "5. Threads版は450文字以内で、X版と口調が変わっているか？\n"
-        "6. replyは本文の繰り返しではなく、新しい価値を足しているか？\n\n"
+        "4. Threads版は450文字以内で、X版と口調が変わっているか？\n"
+        "5. replyは本文の繰り返しではなく、新しい価値を足しているか？\n\n"
+        "【1行目のA/B】\n"
+        "各投稿には hook_alt として、本文の1行目とは\"別の切り口\"の代案を1つ必ず付けること。\n"
+        "本文の1行目と代案は、異なるパターン（例: 数字インパクト vs 損失回避）にすること。\n"
+        "出稿前に編集長が強い方を採用する。\n\n"
         "以下のJSON形式のみを出力してください（説明文不要）:\n"
         "[\n"
-        '  {"text":"X向け投稿文","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
+        '  {"text":"X向け投稿文","hook_alt":"別案の1行目","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
         '"type":"ノウハウ","theme":"テーマ","needs_image":false},\n'
         '  {"text":"X向け投稿文","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
         '"type":"ノウハウ","theme":"テーマ","needs_image":true,'
@@ -826,6 +919,48 @@ def generate_posts_with_claude(
 
     raw = _claude_call(prompt, max_tokens=13000)
     return _parse_json_array(raw)
+
+
+# ── 文字数ガード（X無料アカウント向け）────────────────────
+def _x_weighted_len(text: str) -> int:
+    """Xの重み付き文字数（半角=1 / 全角=2）"""
+    return sum(1 if ord(c) < 128 else 2 for c in text)
+
+
+def enforce_x_length(posts: list[dict]) -> list[dict]:
+    """x_char_limit>0（無料アカウント）のとき、上限超過の投稿をAIで短縮する。
+    超過したまま投稿すると途中で切れて公開されるため、生成段階で必ず収める。"""
+    limit = int(_cfg("content", "x_char_limit", default=0) or 0)
+    if limit <= 0:
+        return posts
+    post_max = int(_cfg("content", "post_length_max", default=135))
+    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    fixed = 0
+    for post in posts:
+        text = post.get("text", "")
+        if not text or _x_weighted_len(text) <= limit:
+            continue
+        try:
+            msg = client.messages.create(
+                model=CLAUDE_MODEL, max_tokens=500,
+                messages=[{"role": "user", "content": (
+                    f"次のX投稿を、1行目のフックの強さと内容の核を保ったまま"
+                    f"{post_max}文字以内に凝縮してください。"
+                    "箇条書きは削るか1行にまとめ、改行は最小限に。"
+                    "出力は投稿本文のみ（前置き・説明・引用符は不要）。\n\n" + text)}],
+            )
+            new_text = "".join(b.text for b in msg.content
+                               if getattr(b, "type", "") == "text").strip()
+            # 上限内に収まった、または少なくとも短くなったなら採用
+            # （それでも超過が残る分は poster 側の最終トリムが保険になる）
+            if new_text and _x_weighted_len(new_text) < _x_weighted_len(text):
+                post["text"] = new_text
+                fixed += 1
+        except Exception as e:
+            print(f"  文字数短縮スキップ: {e}")
+    if fixed:
+        print(f"  文字数ガード: {fixed}件を短縮リライト")
+    return posts
 
 
 # ── 編集長レビュー（2パス目）──────────────────────────────
@@ -844,6 +979,9 @@ def review_posts_with_claude(posts: list[dict],
         "【審査基準】\n"
         "1. フック: 1行目だけ読んで手が止まるか。弱ければ1行目を書き直す"
         "（挨拶・「〜と思います」・抽象的な問いかけで始まる投稿は失格）\n"
+        "   各投稿には hook_alt（1行目の代案）が付いている。本文の1行目と読み比べ、"
+        "スクロールを止める力が強い方を本文の1行目として採用すること"
+        "（代案が強ければ差し替える。hook_altは出力に含めなくてよい）\n"
         "2. 具体性: 抽象論で終わっていないか。数字・手順・固有名詞が入っているか\n"
         "3. 行動理由: 読者が「保存」か「リプライ」をしたくなる要素が明確か\n"
         "4. 数字の根拠: 参考ニュースにない統計数字は削除するか、ニュースにある数字に差し替える\n"
@@ -991,7 +1129,12 @@ def run():
 
     print("トレンド投稿検索中...")
     trending = fetch_trending_tweets()
-    print(f"  Xトレンド: {len(trending)}件")
+    print(f"  Xトレンド: {len(trending)}件（参考: 伸びている投稿）")
+
+    print("勝ちパターン分析中...")
+    patterns = analyze_winning_patterns(trending)
+    if not patterns:
+        print("  勝ちパターン分析: 参考投稿が少ないためスキップ")
 
     print("投稿実績データ取得中...")
     insights = fetch_performance_insights()
@@ -1012,7 +1155,8 @@ def run():
                                            insights=insights,
                                            weekday_ja=weekday_ja,
                                            daily_focus=daily_focus,
-                                           recent_themes=recent_themes)
+                                           recent_themes=recent_themes,
+                                           patterns=patterns)
     except Exception as e:
         notify_error("投稿生成（daily_generator.py）",
                      f"Claude API呼び出しが全リトライ失敗: {e}")
@@ -1030,6 +1174,9 @@ def run():
     if _cfg("content", "editor_review", default=True):
         print("編集長レビュー中...")
         posts = review_posts_with_claude(posts, news)
+
+    # X無料アカウント向けの文字数ガード（上限超過をAIで短縮）
+    posts = enforce_x_length(posts)
 
     # 画像生成（charts配列 = カルーセル対応。旧形式の chart 単体も受け付ける）
     image_urls: dict = {}
@@ -1063,7 +1210,9 @@ def run():
             if ok:
                 if GITHUB_REPOSITORY:
                     owner, repo = GITHUB_REPOSITORY.split("/", 1)
-                    urls.append(f"https://{owner}.github.io/{repo}/post-images/{filename}")
+                    # GitHub Pages の正規ホストは小文字。大文字混じりだと Threads が
+                    # 画像URLを直接フェッチできず失敗するため、owner を小文字化する
+                    urls.append(f"https://{owner.lower()}.github.io/{repo}/post-images/{filename}")
                 else:
                     urls.append(str(out_path))
                 slide_count += 1
@@ -1071,6 +1220,32 @@ def run():
         if urls:
             image_urls[i] = urls
             image_count += 1
+
+    # チャート図解が付かなかった投稿に、AIアイキャッチを補完
+    # （config content.ai_eyecatch: true かつ 環境変数 FAL_KEY がある時だけ動作）
+    if (_cfg("content", "ai_eyecatch", default=False)
+            and ai_image is not None and ai_image.enabled()):
+        audience    = _cfg("content", "target_audience", default="")
+        brand_color = _cfg("branding", "primary_color", default="")
+        made = 0
+        for i, post in enumerate(posts):
+            if i in image_urls:
+                continue  # 既に図解が付いている投稿はスキップ
+            filename = f"{date_str}-{i+1}-eye.png"
+            out_path = IMAGE_DIR / filename
+            if ai_image.generate(post.get("theme", ""), post.get("text", ""),
+                                 out_path, audience, brand_color):
+                if GITHUB_REPOSITORY:
+                    owner, repo = GITHUB_REPOSITORY.split("/", 1)
+                    image_urls[i] = [f"https://{owner.lower()}.github.io/{repo}/post-images/{filename}"]
+                else:
+                    image_urls[i] = [str(out_path)]
+                image_count += 1
+                slide_count += 1
+                made += 1
+        if made:
+            print(f"  AIアイキャッチ: {made}件を生成")
+
     print(f"  画像生成: {image_count}投稿 / 計{slide_count}枚")
 
     print("Notionに保存中...")
