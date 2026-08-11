@@ -547,6 +547,18 @@ _DEFAULT_CALENDAR = {
 }
 
 
+def get_weekly_theme(now: datetime) -> str:
+    """今週の特集テーマを返す。config schedule.weekly_themes に
+    テーマ配列を書くと、週ごとに順番に切り替わる（ISO週番号でローテーション）。
+    同じ週の投稿を1つの文脈で積み上げ、「何の専門家か」を伝わりやすくする。
+    未設定なら空文字（＝従来どおり曜日フォーカスのみ）。"""
+    themes = _cfg("schedule", "weekly_themes", default=[]) or []
+    if not themes:
+        return ""
+    week = now.isocalendar()[1]
+    return str(themes[week % len(themes)]).strip()
+
+
 def get_daily_focus(now: datetime) -> tuple[str, str]:
     """今日の曜日名（日本語）とコンテンツフォーカスを返す"""
     idx      = now.weekday()
@@ -651,6 +663,20 @@ def fetch_performance_insights(max_posts: int = 20) -> str:
                                    key=lambda kv: -sum(kv[1])/len(kv[1])))
             lines.append(f"▼ タイプ別実績: {stats}")
 
+        # 実際に伸びた投稿の「1行目」だけを抜き出す。
+        # 1行目でスクロールが止まるかが全てなので、ここに絞って学習させる
+        hooks = []
+        for r in rows[:8]:
+            first = r["text"].split("。")[0].split("？")[0][:48]
+            if first and r["imp"]:
+                hooks.append(f"・「{first}」→ imp{r['imp']} / 反応率{r['er']}%")
+        if hooks:
+            lines.append("▼ このアカウントで実際に反応が取れた1行目:")
+            lines.extend(hooks)
+            lines.append(
+                "上記はこのアカウントの読者に実際に刺さった1行目です。"
+                "この言い回し・切り口の傾向を今日の1行目に必ず反映すること。")
+
         lines.append(
             "伸びた投稿に共通するフックの型・テーマ・具体性のレベルを抽出し、"
             "今日の投稿に反映すること。ただし文面の使い回しは禁止。新しいテーマで型だけ再現する。")
@@ -708,6 +734,7 @@ def generate_posts_with_claude(
     news_items: list[str], trending: list[dict], count: int = 5,
     insights: str = "", weekday_ja: str = "", daily_focus: str = "",
     recent_themes: list[str] | None = None, patterns: str = "",
+    weekly_theme: str = "",
 ) -> list[dict]:
     news_text  = "\n".join(f"・{item}" for item in news_items) or "（情報なし）"
     # 参考トレンドは「実数つき全文」で渡す。数字があることで
@@ -765,6 +792,14 @@ def generate_posts_with_claude(
             "上記と同じテーマ・同じ切り口・同じツールの同じ使い方は禁止。\n"
             "似たテーマを扱う場合は、必ず別の角度（対象者を変える・逆の主張・別の事例）から書くこと。\n\n"
         )
+    weekly_block = (
+        f"【今週の特集テーマ】\n{weekly_theme}\n"
+        "今週の投稿はこの特集の文脈で積み上げること。"
+        "毎回バラバラのテーマにせず、この切り口を別角度から掘り下げ、"
+        "「このアカウントをフォローすれば、この分野が分かる」と伝わる状態を作る。\n"
+        "ただし前日までと同じ内容の繰り返しは禁止。必ず新しい角度で。\n\n"
+    ) if weekly_theme else ""
+
     focus_block    = (
         f"【今日のコンテンツフォーカス（{weekday_ja}曜日）】\n"
         f"{daily_focus}\n"
@@ -783,6 +818,7 @@ def generate_posts_with_claude(
         f"{insights_block}"
         f"{patterns_block}"
         f"{dedup_block}"
+        f"{weekly_block}"
         f"{focus_block}"
         "【投稿タイプと配分】\n"
         f"A. 実践ノウハウ型（{n_a}件）— フォロワー獲得の主力。保存されることが目的\n"
@@ -816,7 +852,14 @@ def generate_posts_with_claude(
         f"- ハッシュタグは{hashtags}個まで\n\n"
         "【締めのルール（タイプ別）】\n"
         "- A/B型: 保存を促す一言（「あとで見返せるように保存推奨です」等）か、今日やる最初の一歩を1つ提示\n"
-        "- C/D型: 読者への具体的な問いかけで終わり、リプライを誘発（「みなさんはどっち派ですか？」等）\n\n"
+        "- C/D型: リプライを誘発する問いで終わる\n"
+        "  ※Xは「いいね」より「リプライ」を圧倒的に高く評価する。答えやすさが命。\n"
+        "  必ず次のいずれかの形にすること:\n"
+        "  ・二択:「面接で年収を先に聞くのは、アリ？ナシ？」\n"
+        "  ・経験の呼び水:「あなたが一番『やられた』と思った求人票の表現、なんでしたか？」\n"
+        "  ・数字で答えられる問い:「入社を決めるまで、何社受けましたか？」\n"
+        "  禁止:「どう思いますか？」「参考になれば嬉しいです」など、"
+        "何を答えればいいか分からない曖昧な締め\n\n"
         f"【禁止】{forbidden_str}・数字の捏造（参考ニュースにない統計数字を作らない）\n\n"
         "【図解生成ルール】\n"
         "図解はSNSで最も保存されるコンテンツです。以下のルールで付けてください:\n"
@@ -1156,6 +1199,9 @@ def run():
     print(f"  重複防止: 直近{len(recent_themes)}件のテーマを回避対象に設定")
 
     weekday_ja, daily_focus = get_daily_focus(now)
+    weekly_theme = get_weekly_theme(now)
+    if weekly_theme:
+        print(f"  今週の特集: {weekly_theme[:50]}")
     if daily_focus:
         print(f"  {weekday_ja}曜フォーカス: {daily_focus[:30]}...")
 
@@ -1167,7 +1213,8 @@ def run():
                                            weekday_ja=weekday_ja,
                                            daily_focus=daily_focus,
                                            recent_themes=recent_themes,
-                                           patterns=patterns)
+                                           patterns=patterns,
+                                           weekly_theme=weekly_theme)
     except Exception as e:
         notify_error("投稿生成（daily_generator.py）",
                      f"Claude API呼び出しが全リトライ失敗: {e}")
