@@ -466,14 +466,10 @@ def fetch_trending_tweets(max_tweets: int = 12) -> list[dict]:
             return out
 
         collected: list[dict] = []
-        # キーワード検索。反応の高い投稿から集めたいので min_faves を段階的に緩める
+        # キーワード検索。min_faves等の絞り込み演算子は上位APIプラン専用で
+        # 400になるため使わず、取得後に自前のスコアで並べ替えて上位を採用する
         for kw in keywords:
-            hits = []
-            for min_faves in (100, 30):
-                hits = _search(f"{kw} lang:ja -is:retweet -is:reply min_faves:{min_faves}")
-                if hits:
-                    break
-            collected.extend(hits)
+            collected.extend(_search(f"{kw} lang:ja -is:retweet -is:reply"))
         # ベンチマークアカウント（業界の手本）
         for acct in benchmarks[:3]:
             handle = str(acct).lstrip("@")
@@ -534,6 +530,21 @@ def analyze_winning_patterns(trending: list[dict]) -> str:
     except Exception as e:
         print(f"  勝ちパターン分析スキップ: {e}")
     return ""
+
+
+# ── 曜日別コンテンツフォーカス ────────────────────────────
+_WEEKDAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+_WEEKDAY_JA   = ["月", "火", "水", "木", "金", "土", "日"]
+
+_DEFAULT_CALENDAR = {
+    "mon": "週初めの仕事モードに合わせて、今週すぐ使える実践ノウハウを厚めに",
+    "tue": "データ・数字を切り口にした発見系。図解映えするテーマを優先",
+    "wed": "週の中だるみに刺さる「あるある」の言語化・共感系",
+    "thu": "実践ノウハウ強化。月曜と違う角度のテクニック・ツール活用",
+    "fri": "週末前のゆるい本音・失敗談。1週間の振り返りに絡めた学び",
+    "sat": "ライトなライフハック・意外な小ネタ。休日のながら読みに合う軽さ",
+    "sun": "明日からの1週間に向けた前向きな行動提案・モチベートで締める",
+}
 
 
 def get_daily_focus(now: datetime) -> tuple[str, str]:
