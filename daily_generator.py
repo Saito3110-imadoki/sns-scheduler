@@ -94,6 +94,12 @@ PROP_RETWEETS     = _cfg("notion", "properties", "retweets",     default="RT数"
 PROP_IMPRESSIONS  = _cfg("notion", "properties", "impressions",  default="インプレッション")
 
 STATUS_PENDING_APPROVAL = _cfg("notion", "status",   "pending", default="承認待ち")
+# poster.py が投稿対象として拾うステータス
+STATUS_READY            = "未投稿"
+# 完全自動投稿モード: true にすると承認をスキップし、生成した投稿を
+# そのまま投稿対象（未投稿）として保存する。人のチェックが入らないため、
+# 有効化はクライアントの明示的な同意のうえで行うこと
+AUTO_APPROVE            = bool(_cfg("content", "auto_approve", default=False))
 STATUS_POSTED           = _cfg("notion", "status",   "done",    default="投稿済")
 PLATFORM_BOTH           = _cfg("notion", "platform", "default", default="両方")
 
@@ -1082,7 +1088,7 @@ def save_to_notion(posts: list[dict], image_urls: dict) -> int:
             PROP_TEXT:     {"title": [{"text": {"content": post["text"]}}]},
             PROP_DATETIME: {"date": {"start": post_dt.isoformat()}},
             PROP_PLATFORM: {"multi_select": [{"name": PLATFORM_BOTH}]},
-            PROP_STATUS:   {"multi_select": [{"name": STATUS_PENDING_APPROVAL}]},
+            PROP_STATUS:   {"multi_select": [{"name": STATUS_READY if AUTO_APPROVE else STATUS_PENDING_APPROVAL}]},
         }
         threads_text = (post.get("text_threads") or "").strip()
         if threads_text:
@@ -1176,6 +1182,7 @@ def run():
     now      = datetime.now(JST)
     date_str = now.strftime("%Y-%m-%d")
     print(f"[{now.strftime('%Y-%m-%d %H:%M')} JST] 投稿生成開始")
+    print(f"  モード: {'完全自動投稿（承認スキップ）' if AUTO_APPROVE else '承認制（承認待ちで保存）'}")
 
     print("ニュース収集中...")
     news = fetch_rss_news()
@@ -1281,8 +1288,17 @@ def run():
 
     # チャート図解が付かなかった投稿に、AIアイキャッチを補完
     # （config content.ai_eyecatch: true かつ 環境変数 FAL_KEY がある時だけ動作）
-    if (_cfg("content", "ai_eyecatch", default=False)
-            and ai_image is not None and ai_image.enabled()):
+    _eye_on   = bool(_cfg("content", "ai_eyecatch", default=False))
+    _eye_mod  = ai_image is not None
+    _eye_key  = _eye_mod and ai_image.enabled()
+    if not (_eye_on and _eye_mod and _eye_key):
+        # 無言でスキップすると原因が分からないため、欠けている条件を明示する
+        _miss = []
+        if not _eye_on:  _miss.append("config content.ai_eyecatch が false")
+        if not _eye_mod: _miss.append("ai_image.py が配置されていない")
+        elif not _eye_key: _miss.append("環境変数 FAL_KEY が未設定")
+        print(f"  AIアイキャッチ: 無効（{' / '.join(_miss)}）")
+    if (_eye_on and _eye_mod and _eye_key):
         audience    = _cfg("content", "target_audience", default="")
         brand_color = _cfg("branding", "primary_color", default="")
         made = 0
@@ -1313,7 +1329,8 @@ def run():
     print("LINE通知送信中...")
     send_line_notification(saved, image_count)
 
-    print(f"\n完了 — {saved}件の投稿案（図解付き {image_count}件）を「承認待ち」で保存しました")
+    _mode_label = "未投稿（このまま自動投稿されます）" if AUTO_APPROVE else "承認待ち"
+    print(f"\n完了 — {saved}件の投稿案（図解付き {image_count}件）を「{_mode_label}」で保存しました")
 
 
 if __name__ == "__main__":
