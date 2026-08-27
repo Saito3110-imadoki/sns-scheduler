@@ -41,10 +41,6 @@ content:
   # API利用量が約2倍になるため、不要なら false に
   editor_review: true
 
-  # AIアイキャッチ画像（fal.ai / FLUX schnell）。図解チャートが付かない投稿に
-  # 文字なしの映える画像を補完する。要: GitHub Secretに FAL_KEY を登録
-  ai_eyecatch: true
-
   # 投稿文字数（文字）※X Premium加入済み。インプレッションが最も伸びる帯に設定
   # Xのアルゴリズムは「滞在時間」を評価するため、読み応えのある長文が有利
   post_length_min: 280
