@@ -66,10 +66,13 @@ _ICON_ROCKET = """<svg width="42" height="42" viewBox="0 0 24 24" fill="none"
 _ICONS = [_ICON_ZAP, _ICON_COINS, _ICON_TRENDING, _ICON_ROCKET]
 
 
-def _pict(paths: str, color: str, size: int = 26) -> str:
-    """項目に添える小型ピクトグラム（線画・24pxグリッド）"""
+def _pict(paths: str, color: str, size: int = 26, weight: float | None = None) -> str:
+    """項目に添えるピクトグラム（線画・24pxグリッド）。
+    サイズを上げると線が細く見えるため、既定の太さをサイズから決める。"""
+    if weight is None:
+        weight = 2.1 if size >= 32 else 1.9
     return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
-            f'stroke="{color}" stroke-width="1.9" stroke-linecap="round" '
+            f'stroke="{color}" stroke-width="{weight}" stroke-linecap="round" '
             f'stroke-linejoin="round">{paths}</svg>')
 
 
@@ -383,23 +386,22 @@ def _html_list(chart: dict) -> str:
     for i, it in enumerate(items):
         head = it.get("head", "")
         text = it.get("text", "")
-        pic = _pict(_ITEM_PICTS[i % len(_ITEM_PICTS)], _MAIN, 24)
+        pic = _pict(_ITEM_PICTS[i % len(_ITEM_PICTS)], _MAIN, 34)
         rows.append(f"""
-<div style="display:flex;align-items:center;gap:20px;background:{_CARD};
+<div style="display:flex;align-items:center;gap:18px;background:{_CARD};
   border:1px solid {_BORDER};border-left:5px solid {_MAIN};
   border-radius:14px;padding:{row_pad};">
   <div style="width:{num_sz};height:{num_sz};flex-shrink:0;border-radius:14px;
     background:{_MAIN};display:flex;
     align-items:center;justify-content:center;font-size:{num_fs};font-weight:900;
     color:#ffffff;">{i+1}</div>
+  <div style="display:flex;align-items:center;justify-content:center;
+    flex-shrink:0;">{pic}</div>
   <div style="flex:1;">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:5px;">
-      <span style="display:flex;flex-shrink:0;">{pic}</span>
-      <span style="font-size:{head_fs};font-weight:800;color:{_TEXT};
-        line-height:1.3;">{_hl(head)}</span>
-    </div>
+    <div style="font-size:{head_fs};font-weight:800;color:{_TEXT};
+      line-height:1.3;margin-bottom:5px;">{_hl(head)}</div>
     <div style="font-size:{text_fs};color:{_MUTED};font-weight:500;
-      line-height:1.5;padding-left:34px;">{_hl(text)}</div>
+      line-height:1.5;">{_hl(text)}</div>
   </div>
 </div>""")
 
@@ -521,6 +523,8 @@ def _html_matrix(chart: dict) -> str:
 def _apply_page_badge(html: str, page: tuple | None, role: str = "") -> str:
     """複数枚スライドのとき右上に「起 1 / 4」バッジを付ける。
     role には起承転結のいずれかが入る。1枚目にはスワイプを促す矢印も添える。"""
+    # ページバッジは視線を散らすため表示しない（カルーセルは画像の並びで伝わる）
+    return html
     if not page or page[1] <= 1:
         return html
     cur, total = page
@@ -568,7 +572,20 @@ def generate_infographic(chart: dict, output_path: Path,
     elif chart_type == "list":
         html = _html_list(chart)
     else:
-        return False
+        # 想定外のchart_typeでも画像なしにせず、データ形状から最も近い型で描く
+        print(f"  図解: 未知のchart_type「{chart_type}」→ 代替テンプレートで描画")
+        if chart.get("groups"):
+            html = _html_matrix(chart)
+        elif chart.get("left") or chart.get("right"):
+            html = _html_compare_flow(chart)
+        elif chart.get("steps"):
+            html = _html_flow(chart)
+        elif chart.get("stats"):
+            html = _html_stat(chart)
+        elif chart.get("items"):
+            html = _html_list(chart)
+        else:
+            return False
 
     html = _apply_branding(html, branding or {})
     html = _apply_page_badge(html, page, role=str(chart.get("role", "")).strip())
