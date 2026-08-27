@@ -41,11 +41,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: sns_scheduler/requirements.txt
-
+          
       - name: 依存ライブラリのインストール
-        run: pip install -r sns_scheduler/requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Playwright Chromium インストール
         run: playwright install chromium --with-deps
@@ -63,7 +61,7 @@ jobs:
           LINE_CHANNEL_ACCESS_TOKEN:   ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           LINE_USER_ID:                ${{ secrets.LINE_USER_ID }}
           GITHUB_REPOSITORY:           ${{ github.repository }}
-        run: python sns_scheduler/daily_generator.py
+        run: python daily_generator.py
 
       - name: 生成した画像をリポジトリにコミット
         run: |
