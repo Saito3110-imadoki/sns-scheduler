@@ -872,7 +872,9 @@ def generate_posts_with_claude(
         "- B型（データ型）: needs_image: true 必須。数字系チャート（stat / bar / comparison）を付ける\n"
         "- A型（実践ノウハウ）: 少なくとも1件に flow または list の図解を付けること（needs_image: true）。\n"
         "  手順の流れ→ flow、コツ・ポイントの列挙→ list が向いている\n"
-        "- C/D型: 原則 needs_image: false。ただし「原因→対策」のような構造が明確な場合は flow を付けてよい\n\n"
+        "- C/D型: 原則 needs_image: false。ただし「原因→対策」のような構造が明確な場合は flow を付けてよい\n"
+        "- 「悪い流れ vs 良い流れ」「よくある失敗 vs 正しいやり方」のように"
+        "２つの筋道を対比できるテーマなら compare_flow を使う（最も保存されやすい型）\n\n"
         "【複数枚スライド（カルーセル）— 起承転結で構成する】\n"
         "枚数は投稿内容に合わせて最適化すること。4枚は上限でありノルマではない。\n"
         "スライドを増やすほど離脱も増える。その枚数でしか伝えられない時だけ増やすこと:\n"
@@ -972,7 +974,9 @@ def generate_posts_with_claude(
         '  {"text":"数字を含むX向け投稿文","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
         '"type":"データ","theme":"テーマ","needs_image":true,'
         '"charts":[{"role":"起","chart_type":"list","title":"...","items":[...]},'
-        '{"role":"転","chart_type":"flow","title":"...","steps":[...]},'
+        '{"role":"転","chart_type":"compare_flow","title":"...",'
+        '"left":{"label":"よくある流れ","items":["…","…","…"]},'
+        '"right":{"label":"うまくいく流れ","items":["…","…","…"]}},'
         '{"role":"結","chart_type":"stat","title":"...","stats":[...]}]}\n'
         "]"
     )

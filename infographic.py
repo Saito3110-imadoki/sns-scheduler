@@ -66,6 +66,22 @@ _ICON_ROCKET = """<svg width="42" height="42" viewBox="0 0 24 24" fill="none"
 _ICONS = [_ICON_ZAP, _ICON_COINS, _ICON_TRENDING, _ICON_ROCKET]
 
 
+def _pict(paths: str, color: str, size: int = 26) -> str:
+    """項目に添える小型ピクトグラム（線画・24pxグリッド）"""
+    return (f'<svg width="{size}" height="{size}" viewBox="0 0 24 24" fill="none" '
+            f'stroke="{color}" stroke-width="1.9" stroke-linecap="round" '
+            f'stroke-linejoin="round">{paths}</svg>')
+
+
+# 項目の並び順で使い分ける汎用ピクトグラム（意味が固定されない中立的な図形）
+_ITEM_PICTS = [
+    '<path d="M4 12.5l5 5L20 6.5"/>',                                        # チェック
+    '<circle cx="12" cy="12" r="9"/><path d="M12 8v5l3 2"/>',                # 時計
+    '<path d="M3 20h18"/><path d="M6 20V10M12 20V4M18 20v-7"/>',             # 棒グラフ
+    '<path d="M12 3l2.6 5.6 6.1.8-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.4l6.1-.8z"/>',  # 星
+]
+
+
 # ── ブランディング適用 ────────────────────────────────────
 def _apply_branding(html: str, branding: dict) -> str:
     """生成済みHTMLにブランドカラーとウォーターマークを適用する"""
@@ -93,7 +109,7 @@ def _apply_branding(html: str, branding: dict) -> str:
             f'letter-spacing:1px;opacity:0.85;">{_e(company_name)}</span>'
         )
         watermark = (
-            f'<div style="position:absolute;bottom:14px;right:22px;'
+            f'<div style="position:absolute;bottom:8px;right:20px;'
             f'display:flex;align-items:center;z-index:99;">{inner}</div>'
         )
         html = html.replace("</div>\n</body>", f"{watermark}\n</div>\n</body>")
@@ -141,10 +157,16 @@ def _header(title: str, subtitle: str = "") -> str:
 def _impact_footer(impact: str = "", caption: str = "") -> str:
     parts: list[str] = []
     if impact:
+        bulb = _pict('<path d="M9 19h6"/><path d="M10 22h4"/>'
+                     '<path d="M12 2a6.5 6.5 0 0 0-4 11.6c.6.5 1 1.3 1 2.1h6c0-.8.4-1.6 1-2.1'
+                     'A6.5 6.5 0 0 0 12 2z"/>', "#ffffff", 24)
         parts.append(f"""
-<div style="background:{_IMP_BG};border:1px solid {_IMP_BD};border-radius:10px;
-  padding:12px 28px;margin:0 52px 12px;text-align:center;flex-shrink:0;">
-  <span style="font-size:18px;font-weight:800;color:{_ACCENT};">{_e(impact)}</span>
+<div style="background:{_TEXT};border-radius:12px;
+  padding:15px 26px;margin:0 52px 26px;flex-shrink:0;
+  display:flex;align-items:center;gap:16px;">
+  <span style="display:flex;flex-shrink:0;">{bulb}</span>
+  <span style="font-size:19px;font-weight:800;color:#ffffff;
+    line-height:1.5;">{_hl(impact)}</span>
 </div>""")
     if caption:
         parts.append(
@@ -361,26 +383,80 @@ def _html_list(chart: dict) -> str:
     for i, it in enumerate(items):
         head = it.get("head", "")
         text = it.get("text", "")
+        pic = _pict(_ITEM_PICTS[i % len(_ITEM_PICTS)], _MAIN, 24)
         rows.append(f"""
-<div style="display:flex;align-items:center;gap:22px;background:{_CARD};
-  border:1px solid {_BORDER};border-radius:14px;padding:{row_pad};">
+<div style="display:flex;align-items:center;gap:20px;background:{_CARD};
+  border:1px solid {_BORDER};border-left:5px solid {_MAIN};
+  border-radius:14px;padding:{row_pad};">
   <div style="width:{num_sz};height:{num_sz};flex-shrink:0;border-radius:14px;
-    background:linear-gradient(135deg,{_MAIN},{_ACCENT});display:flex;
+    background:{_MAIN};display:flex;
     align-items:center;justify-content:center;font-size:{num_fs};font-weight:900;
     color:#ffffff;">{i+1}</div>
-  <div>
-    <div style="font-size:{head_fs};font-weight:800;color:{_TEXT};
-      margin-bottom:4px;line-height:1.3;">{_hl(head)}</div>
+  <div style="flex:1;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:5px;">
+      <span style="display:flex;flex-shrink:0;">{pic}</span>
+      <span style="font-size:{head_fs};font-weight:800;color:{_TEXT};
+        line-height:1.3;">{_hl(head)}</span>
+    </div>
     <div style="font-size:{text_fs};color:{_MUTED};font-weight:500;
-      line-height:1.45;">{_hl(text)}</div>
+      line-height:1.5;padding-left:34px;">{_hl(text)}</div>
   </div>
 </div>""")
 
     return _base(f"""
 {_header(chart.get("title",""), chart.get("subtitle",""))}
 <div style="flex:1;display:flex;flex-direction:column;justify-content:center;
-  gap:14px;padding:12px 52px;">
+  gap:16px;padding:4px 52px;">
   {"".join(rows)}
+</div>
+{_impact_footer(impact, caption)}""")
+
+
+# ── compare_flow チャート（左右対比＋因果） ─────────────────
+def _html_compare_flow(chart: dict) -> str:
+    """「問題 vs 解決」を左右に並べる対比型。
+    left/right それぞれに label（見出し）と items（要素の配列）を持つ。
+    左を赤系・右をブランド色にして、負の連鎖と正の打ち手を対比させる。"""
+    left    = chart.get("left", {}) or {}
+    right   = chart.get("right", {}) or {}
+    impact  = chart.get("impact", "")
+    caption = chart.get("caption", "")
+    NEG     = "#c0392b"
+
+    def _side(side: dict, color: str, tint: str, arrow: str) -> str:
+        label = side.get("label", "")
+        items = [str(x) for x in (side.get("items", []) or [])][:5]
+        n     = len(items)
+        fs    = "20px" if n <= 4 else "18px"
+        pad   = "13px 18px" if n <= 4 else "10px 16px"
+        rows  = []
+        for i, it in enumerate(items):
+            sep = (f'<div style="text-align:center;color:{color};font-size:17px;'
+                   f'line-height:1;margin:-2px 0;">{arrow}</div>') if i else ""
+            rows.append(sep + f"""
+<div style="background:#ffffff;border:1px solid {tint};border-radius:11px;
+  padding:{pad};font-size:{fs};font-weight:700;color:{_TEXT};line-height:1.45;">
+  {_hl(it)}</div>""")
+        return f"""
+<div style="flex:1;background:{tint}1a;border:2px solid {tint};border-radius:16px;
+  padding:18px 20px;display:flex;flex-direction:column;">
+  <div style="background:{color};color:#ffffff;font-size:18px;font-weight:900;
+    border-radius:9px;padding:8px 16px;text-align:center;margin-bottom:14px;
+    flex-shrink:0;">{_e(label)}</div>
+  <div style="flex:1;display:flex;flex-direction:column;justify-content:center;
+    gap:7px;">{"".join(rows)}</div>
+</div>"""
+
+    return _base(f"""
+{_header(chart.get("title",""), chart.get("subtitle",""))}
+<div style="flex:1;display:flex;gap:22px;padding:4px 52px;align-items:stretch;">
+  {_side(left,  NEG,   "#e8b4ae", "↓")}
+  <div style="display:flex;align-items:center;flex-shrink:0;">
+    <div style="width:44px;height:44px;border-radius:50%;background:{_TEXT};
+      color:#ffffff;display:flex;align-items:center;justify-content:center;
+      font-size:22px;font-weight:900;">&#8594;</div>
+  </div>
+  {_side(right, _MAIN, "#a9dcc9", "↓")}
 </div>
 {_impact_footer(impact, caption)}""")
 
@@ -429,6 +505,8 @@ def generate_infographic(chart: dict, output_path: Path,
         html = _html_comparison(chart)
     elif chart_type == "flow":
         html = _html_flow(chart)
+    elif chart_type == "compare_flow":
+        html = _html_compare_flow(chart)
     elif chart_type == "list":
         html = _html_list(chart)
     else:
