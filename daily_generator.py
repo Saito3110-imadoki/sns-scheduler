@@ -874,7 +874,9 @@ def generate_posts_with_claude(
         "  手順の流れ→ flow、コツ・ポイントの列挙→ list が向いている\n"
         "- C/D型: 原則 needs_image: false。ただし「原因→対策」のような構造が明確な場合は flow を付けてよい\n"
         "- 「悪い流れ vs 良い流れ」「よくある失敗 vs 正しいやり方」のように"
-        "２つの筋道を対比できるテーマなら compare_flow を使う（最も保存されやすい型）\n\n"
+        "２つの筋道を対比できるテーマなら compare_flow を使う（最も保存されやすい型）\n"
+        "- 「◯◯の全類型」「見抜き方まとめ」のように、系統立てて網羅できるテーマなら"
+        " matrix を使う。2〜3の系統に分け、各系統に3〜5項目を入れる（保存率が最も高い）\n\n"
         "【複数枚スライド（カルーセル）— 起承転結で構成する】\n"
         "枚数は投稿内容に合わせて最適化すること。4枚は上限でありノルマではない。\n"
         "スライドを増やすほど離脱も増える。その枚数でしか伝えられない時だけ増やすこと:\n"
@@ -974,6 +976,9 @@ def generate_posts_with_claude(
         '  {"text":"数字を含むX向け投稿文","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
         '"type":"データ","theme":"テーマ","needs_image":true,'
         '"charts":[{"role":"起","chart_type":"list","title":"...","items":[...]},'
+        '{"role":"承","chart_type":"matrix","title":"...",'
+        '"groups":[{"label":"系統A","items":[{"head":"項目","text":"補足"}]},'
+        '{"label":"系統B","items":[{"head":"項目","text":"補足"}]}]},'
         '{"role":"転","chart_type":"compare_flow","title":"...",'
         '"left":{"label":"よくある流れ","items":["…","…","…"]},'
         '"right":{"label":"うまくいく流れ","items":["…","…","…"]}},'

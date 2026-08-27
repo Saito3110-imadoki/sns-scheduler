@@ -461,6 +461,62 @@ def _html_compare_flow(chart: dict) -> str:
 {_impact_footer(impact, caption)}""")
 
 
+# ── matrix チャート（分類マトリクス・網羅型） ─────────────────
+def _html_matrix(chart: dict) -> str:
+    """テーマを系統ごとに分類して一覧化する網羅型。
+    groups: [{label, items:[{head, text}]}] を2〜3列に並べる。
+    「全体像を1枚で押さえられる」ため保存されやすい。"""
+    groups  = (chart.get("groups") or [])[:3]
+    impact  = chart.get("impact", "")
+    caption = chart.get("caption", "")
+    if not groups:
+        return _html_list(chart)
+
+    # 系統ごとに色を変え、分類が視覚的に分かれるようにする
+    palette = [_MAIN, "#0369a1", _ACCENT]
+    ncol    = len(groups)
+    max_it  = max((len(g.get("items") or []) for g in groups), default=0)
+    head_fs = "17px" if max_it <= 4 else "15px"
+    text_fs = "13.5px" if max_it <= 4 else "12.5px"
+    pad     = "10px 13px" if max_it <= 4 else "8px 12px"
+
+    cols = []
+    for gi, g in enumerate(groups):
+        color = palette[gi % len(palette)]
+        items = (g.get("items") or [])[:6]
+        rows  = []
+        for it in items:
+            if isinstance(it, dict):
+                head, text = it.get("head", ""), it.get("text", "")
+            else:
+                head, text = str(it), ""
+            sub = (f'<div style="font-size:{text_fs};color:{_MUTED};font-weight:500;'
+                   f'line-height:1.4;margin-top:3px;">{_hl(text)}</div>') if text else ""
+            rows.append(f"""
+<div style="background:#ffffff;border:1px solid {_BORDER};border-left:3px solid {color};
+  border-radius:8px;padding:{pad};">
+  <div style="font-size:{head_fs};font-weight:800;color:{_TEXT};
+    line-height:1.35;">{_hl(head)}</div>
+  {sub}
+</div>""")
+        cols.append(f"""
+<div style="flex:1;display:flex;flex-direction:column;min-width:0;">
+  <div style="background:{color};color:#ffffff;font-size:17px;font-weight:900;
+    border-radius:9px 9px 0 0;padding:9px 14px;text-align:center;
+    flex-shrink:0;">{_e(g.get("label",""))}</div>
+  <div style="flex:1;background:{_CARD};border:1px solid {_BORDER};border-top:none;
+    border-radius:0 0 9px 9px;padding:11px;display:flex;flex-direction:column;
+    justify-content:space-evenly;gap:7px;">{"".join(rows)}</div>
+</div>""")
+
+    return _base(f"""
+{_header(chart.get("title",""), chart.get("subtitle",""))}
+<div style="flex:1;display:flex;gap:14px;padding:4px 52px;align-items:stretch;">
+  {"".join(cols)}
+</div>
+{_impact_footer(impact, caption)}""")
+
+
 # ── ページバッジ（カルーセル用）──────────────────────────
 def _apply_page_badge(html: str, page: tuple | None, role: str = "") -> str:
     """複数枚スライドのとき右上に「起 1 / 4」バッジを付ける。
@@ -505,6 +561,8 @@ def generate_infographic(chart: dict, output_path: Path,
         html = _html_comparison(chart)
     elif chart_type == "flow":
         html = _html_flow(chart)
+    elif chart_type == "matrix":
+        html = _html_matrix(chart)
     elif chart_type == "compare_flow":
         html = _html_compare_flow(chart)
     elif chart_type == "list":
