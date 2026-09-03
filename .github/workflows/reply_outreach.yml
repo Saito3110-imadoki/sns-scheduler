@@ -1,0 +1,55 @@
+name: Reply Outreach (リプ周り文案の作成)
+
+# 伸びている他アカウントの投稿に対する「返信文案」をAIが作成し、
+# Notionに承認待ちで保存する。露出を増やすための施策。
+# Actionsタブ →「Reply Outreach (リプ周り文案の作成)」→ Run workflow で実行。
+#
+# 安全側の設計:
+#   - config の reply_outreach.enabled が true のときだけ動作する
+#   - 作成された文案は必ず「承認待ち」。承認したものだけが返信として送られる
+#   - まずは dry_run: true で文案だけ確認することを推奨
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Notionに保存せず、文案の確認だけ行う"
+        type: boolean
+        required: false
+        default: true
+
+jobs:
+  reply-outreach:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ./requirements.txt
+
+      - name: 依存ライブラリのインストール
+        run: pip install -r ./requirements.txt
+
+      - name: リプ周り文案の作成
+        env:
+          NOTION_TOKEN:          ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID:    ${{ secrets.NOTION_DATABASE_ID }}
+          ANTHROPIC_API_KEY:     ${{ secrets.ANTHROPIC_API_KEY }}
+          X_API_KEY:             ${{ secrets.X_API_KEY }}
+          X_API_KEY_SECRET:      ${{ secrets.X_API_KEY_SECRET }}
+          X_ACCESS_TOKEN:        ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+          LINE_USER_ID:          ${{ secrets.LINE_USER_ID }}
+          LINE_USER_ID2:         ${{ secrets.LINE_USER_ID2 }}
+        run: |
+          python ./reply_finder.py \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
