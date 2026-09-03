@@ -1,0 +1,51 @@
+name: Find Benchmarks (手本アカウント候補の抽出)
+
+# config の topics.benchmark_accounts に何を設定するかを、実データから決めるためのツール。
+# キーワードで伸びている投稿を集め、その投稿主を反応順に並べてログに出す。
+# Actionsタブ →「Find Benchmarks (手本アカウント候補の抽出)」→ Run workflow で実行。
+#
+# ※ X APIの検索を使うためクレジットが必要です（402が出る場合は残高切れ）。
+# ※ Notionへの書き込みは行いません。
+
+on:
+  workflow_dispatch:
+    inputs:
+      keywords:
+        description: "検索キーワード（スペース区切り。空ならconfigのkeywords_xを使用）"
+        required: false
+        default: ""
+      top:
+        description: "表示する候補数"
+        required: false
+        default: "12"
+
+jobs:
+  find-benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ./requirements.txt
+
+      - name: 依存ライブラリのインストール
+        run: pip install -r ./requirements.txt
+
+      - name: 手本アカウント候補の抽出
+        env:
+          X_API_KEY:             ${{ secrets.X_API_KEY }}
+          X_API_KEY_SECRET:      ${{ secrets.X_API_KEY_SECRET }}
+          X_ACCESS_TOKEN:        ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+        run: |
+          python ./find_benchmarks.py \
+            --top "${{ inputs.top }}" \
+            ${{ inputs.keywords && format('--keywords {0}', inputs.keywords) || '' }}
