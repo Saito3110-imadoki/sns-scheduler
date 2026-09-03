@@ -669,8 +669,8 @@ def gather(mode: str) -> dict:
     from notion_client import Client
     now = datetime.now(JST)
     start, end, pstart, pend = calc_period(mode, now)
-    notion = Client(auth=os.environ["NOTION_TOKEN"])
-    db_id  = os.environ["NOTION_DATABASE_ID"]
+    notion = Client(auth=os.environ["NOTION_TOKEN"].strip())
+    db_id  = os.environ["NOTION_DATABASE_ID"].strip()
     posts  = fetch_posts(notion, db_id, start, end)
     prev   = fetch_posts(notion, db_id, pstart, pend)
     label  = f"{start.strftime('%Y/%-m/%-d')} 〜 {(end - timedelta(days=1)).strftime('%-m/%-d')}"

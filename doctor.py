@@ -211,6 +211,19 @@ def check_line():
             _record(NG, f"LINE 宛先 {uid[:6]}…", str(e))
 
 
+def check_ai_image():
+    print("\n■ AIアイキャッチ（任意）")
+    key = _env("FAL_KEY")
+    if not key:
+        _record(SKIP, "AIアイキャッチ", "FAL_KEY 未設定（使わないならOK。config ai_eyecatch: false）")
+        return
+    # 実生成は課金が発生するためキーの存在のみ確認（形式: 通常 uuid:hex）
+    if ":" in key and len(key) > 20:
+        _record(OK, "AIアイキャッチ", "FAL_KEY 設定済み（config ai_eyecatch: true で有効化）")
+    else:
+        _record(WARN, "AIアイキャッチ", "FAL_KEYの形式が想定と異なります。fal.aiのキーか確認")
+
+
 def check_threads():
     print("\n■ Threads")
     token = _env("THREADS_ACCESS_TOKEN")
@@ -260,6 +273,7 @@ def main():
     check_anthropic()
     check_line()
     check_threads()
+    check_ai_image()
 
     ng = sum(1 for s, _ in _results if s == NG)
     ok = sum(1 for s, _ in _results if s == OK)

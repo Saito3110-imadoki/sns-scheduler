@@ -48,8 +48,8 @@ def _cfg(*keys, default=None):
     return node
 
 
-NOTION_TOKEN       = os.environ["NOTION_TOKEN"]
-NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+NOTION_TOKEN       = os.environ["NOTION_TOKEN"].strip()
+NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"].strip()
 
 PROP_STATUS        = _cfg("notion", "properties", "status",        default="ステータス")
 PROP_TWEET_ID      = _cfg("notion", "properties", "tweet_id",      default="X投稿ID")

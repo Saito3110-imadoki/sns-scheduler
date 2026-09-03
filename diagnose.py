@@ -253,6 +253,63 @@ def _print_segment(title: str, seg: list[tuple], min_n: int = 3) -> None:
               f"  {b['th_lk_pp']:>9.2f} → {a['th_lk_pp']:>7.2f}  {_delta(a['th_lk_pp'], b['th_lk_pp'])}")
 
 
+def fetch_status_counts(notion: Client, db_id: str, start: datetime) -> dict:
+    """ステータス別の件数と最終日を集計する。
+    投稿が止まった原因が「承認されていない」のか「投稿に失敗している」のかは、
+    ここを見れば一発で分かる。"""
+    counts: dict[str, dict] = {}
+    cursor = None
+    while True:
+        kwargs = {
+            "database_id": db_id,
+            "filter": {"property": PROP_DATETIME,
+                       "date": {"on_or_after": start.isoformat()}},
+            "page_size": 100,
+        }
+        if cursor:
+            kwargs["start_cursor"] = cursor
+        try:
+            resp = notion.databases.query(**kwargs)
+        except Exception as e:
+            print(f"  ステータス集計スキップ: {e}")
+            return counts
+        for page in resp.get("results", []):
+            dt = _dt(page)
+            names = [s.get("name", "") for s
+                     in (page["properties"].get(PROP_STATUS, {})
+                         .get("multi_select") or [])] or ["（未設定）"]
+            for name in names:
+                c = counts.setdefault(name, {"n": 0, "last": None})
+                c["n"] += 1
+                if dt and (c["last"] is None or dt > c["last"]):
+                    c["last"] = dt
+        if not resp.get("has_more"):
+            return counts
+        cursor = resp.get("next_cursor")
+
+
+def _print_status(counts: dict) -> None:
+    if not counts:
+        return
+    print("\n■ ステータス別の内訳（対象期間の全レコード）")
+    for name, c in sorted(counts.items(), key=lambda kv: -kv[1]["n"]):
+        last = c["last"].date() if c["last"] else "—"
+        print(f"  {_pad(name, 12)} {c['n']:>4}本   最終: {last}")
+
+    waiting = sum(c["n"] for n, c in counts.items()
+                  if n in ("承認待ち", "未投稿"))
+    errors  = counts.get("エラー", {}).get("n", 0)
+    if errors:
+        print(f"\n  ⚠ 「エラー」が{errors}本あります。"
+              "投稿処理そのものが失敗しています（APIのクレジット切れ・認証切れなど）。")
+        print("     Actions の Auto Poster のログでエラー内容を確認してください。")
+    if waiting:
+        print(f"\n  ⚠ 「承認待ち／未投稿」が{waiting}本たまっています。")
+        print("     承認待ち → 未投稿 に変更しないと配信されません。")
+        print("     承認の手間が原因で止まるなら、config の content.auto_approve を")
+        print("     true にすると承認なしで配信できます（クライアントの同意が必要）。")
+
+
 def _measured(r: dict) -> bool:
     """計測値が入っているか。X・Threadsのどちらにも表示数がない行は
     「反応がなかった投稿」ではなく「計測されていない投稿」として扱う"""
@@ -356,6 +413,7 @@ def run(weeks: int, min_age_days: int, include_unmeasured: bool = False) -> None
     print(f"  取得: {len(rows)}本（うち比較対象 {len(mature)}本）")
 
     _print_weekly(weekly_table(rows))
+    _print_status(fetch_status_counts(notion, db_id, start))
     measured = _print_health(rows, now)
     if not include_unmeasured:
         mature = [r for r in mature if _measured(r)]

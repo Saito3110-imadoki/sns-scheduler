@@ -376,17 +376,18 @@ def _html_list(chart: dict) -> str:
     caption = chart.get("caption", "")
     n       = len(items)
 
-    head_fs = "25px" if n <= 3 else "22px"
-    text_fs = "18px" if n <= 3 else "16px"
+    head_fs = "29px" if n <= 3 else "23px"
+    text_fs = "20px" if n <= 3 else "16px"
     num_sz  = "56px" if n <= 3 else "50px"
     num_fs  = "26px" if n <= 3 else "23px"
-    row_pad = "18px 26px" if n <= 3 else "14px 24px"
+    row_pad = "18px 26px" if n <= 3 else "12px 24px"
+    pic_sz  = 40 if n <= 3 else 36
 
     rows = []
     for i, it in enumerate(items):
         head = it.get("head", "")
         text = it.get("text", "")
-        pic = _pict(_ITEM_PICTS[i % len(_ITEM_PICTS)], _MAIN, 34)
+        pic = _pict(_ITEM_PICTS[i % len(_ITEM_PICTS)], _MAIN, pic_sz)
         rows.append(f"""
 <div style="display:flex;align-items:center;gap:18px;background:{_CARD};
   border:1px solid {_BORDER};border-left:5px solid {_MAIN};
@@ -425,7 +426,9 @@ def _html_compare_flow(chart: dict) -> str:
     caption = chart.get("caption", "")
     NEG     = "#c0392b"
 
-    def _side(side: dict, color: str, tint: str, arrow: str) -> str:
+    def _side(side: dict, color: str, arrow: str) -> str:
+        # 枠・背景は見出し色から透明度で作る（ブランドカラー変更にもそのまま追従する）
+        tint_bg, tint_bd, tint_it = f"{color}12", f"{color}55", f"{color}33"
         label = side.get("label", "")
         items = [str(x) for x in (side.get("items", []) or [])][:5]
         n     = len(items)
@@ -436,11 +439,11 @@ def _html_compare_flow(chart: dict) -> str:
             sep = (f'<div style="text-align:center;color:{color};font-size:17px;'
                    f'line-height:1;margin:-2px 0;">{arrow}</div>') if i else ""
             rows.append(sep + f"""
-<div style="background:#ffffff;border:1px solid {tint};border-radius:11px;
+<div style="background:#ffffff;border:1px solid {tint_it};border-radius:11px;
   padding:{pad};font-size:{fs};font-weight:700;color:{_TEXT};line-height:1.45;">
   {_hl(it)}</div>""")
         return f"""
-<div style="flex:1;background:{tint}1a;border:2px solid {tint};border-radius:16px;
+<div style="flex:1;background:{tint_bg};border:2px solid {tint_bd};border-radius:16px;
   padding:18px 20px;display:flex;flex-direction:column;">
   <div style="background:{color};color:#ffffff;font-size:18px;font-weight:900;
     border-radius:9px;padding:8px 16px;text-align:center;margin-bottom:14px;
@@ -452,13 +455,13 @@ def _html_compare_flow(chart: dict) -> str:
     return _base(f"""
 {_header(chart.get("title",""), chart.get("subtitle",""))}
 <div style="flex:1;display:flex;gap:22px;padding:4px 52px;align-items:stretch;">
-  {_side(left,  NEG,   "#e8b4ae", "↓")}
+  {_side(left,  NEG,   "↓")}
   <div style="display:flex;align-items:center;flex-shrink:0;">
     <div style="width:44px;height:44px;border-radius:50%;background:{_TEXT};
       color:#ffffff;display:flex;align-items:center;justify-content:center;
       font-size:22px;font-weight:900;">&#8594;</div>
   </div>
-  {_side(right, _MAIN, "#a9dcc9", "↓")}
+  {_side(right, _MAIN, "↓")}
 </div>
 {_impact_footer(impact, caption)}""")
 
