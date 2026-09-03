@@ -84,6 +84,7 @@ PROP_TEXT         = _cfg("notion", "properties", "text",         default="投稿
 PROP_THREADS_TEXT = _cfg("notion", "properties", "threads_text", default="Threads用文面")
 PROP_REPLY_TEXT   = _cfg("notion", "properties", "reply_text",   default="リプライ文面")
 PROP_POST_TYPE    = _cfg("notion", "properties", "post_type",    default="投稿タイプ")
+PROP_FORMAT       = _cfg("notion", "properties", "post_format",  default="投稿フォーマット")
 PROP_DATETIME     = _cfg("notion", "properties", "datetime",     default="投稿日時")
 PROP_PLATFORM     = _cfg("notion", "properties", "platform",     default="媒体")
 PROP_STATUS       = _cfg("notion", "properties", "status",       default="ステータス")
@@ -735,12 +736,168 @@ def _parse_json_array(raw: str) -> list:
         return []
 
 
+# ── 投稿フォーマット（型）────────────────────────────────
+# 「同じような投稿ばかり」になる最大の原因は、内容ではなく“構造”が毎回同じこと。
+# 型を明示的に指定し、毎日ローテーションさせることで見た目の変化を作る。
+_FORMATS: dict[str, str] = {
+    "箇条書き": (
+        "冒頭2行で結論と対象読者を示し、本文を「・」の箇条書き3〜5項目で並べる。"
+        "各項目は20〜40文字で言い切る。最後に必ず箇条書きではない締めの1文を置く"
+        "（箇条書きで終わらせない）"),
+    "体験談ストーリー": (
+        "「いつ・どこで・何をして・どうなったか」を時系列で語る。"
+        "具体的な場面描写から入り、途中に失敗や想定外を1つ挟み、最後に学びを1行で置く。"
+        "箇条書きは使わない"),
+    "一問一答": (
+        "読者からよく出る質問を1つ立て、それに短く答える形式。"
+        "「Q. 〜」「A. 〜」の明示ではなく、問い→即答→理由→補足の流れで自然に書く"),
+    "会話・セリフ": (
+        "実際にあった会話の再現から入る。「〜って言われました。」のようにセリフを鉤括弧で置き、"
+        "そのやり取りを起点に本題へ入る。登場人物は自分と相手の2人まで"),
+    "逆張り": (
+        "世間で正しいとされていることを1行目で否定し、その理由を根拠つきで展開する。"
+        "否定しっぱなしにせず、では何をすべきかを最後に必ず示す"),
+    "ビフォーアフター": (
+        "変える前の状態と変えた後の状態を対比させる。"
+        "「前は〜だった」→「今は〜になった」→「変えたのは〜だけ」の3段構成"),
+    "チェックリスト": (
+        "読者が自分に当てはめて確認できる項目を3〜5個並べる。"
+        "「□ 〜」形式で、当てはまったら危険/OK という判定基準を最後に示す"),
+    "数字分解": (
+        "1つの数字を提示し、その内訳・計算過程を分解して見せる。"
+        "「なぜその数字になるのか」が読者にも再現できる形で書く"),
+    "失敗告白": (
+        "自分がやらかしたことを具体的に告白する。かっこつけない。"
+        "損失や恥ずかしさを隠さず書き、同じ失敗を避ける方法を1つだけ渡す"),
+    "連投スレッド": (
+        "1投稿では入りきらない濃い内容を、続きのリプライに分けて展開する。"
+        "本文（text）は単体でも完結する導入にし、thread 配列に続きを2〜3個入れる。"
+        "各スレッドは1つのトピックに絞り、最後の1つで締める"),
+}
+
+# 型を指定しても実現しにくいタイプとの相性（図解必須のB型など）は
+# プロンプト側の指示で吸収するため、ここでは構造だけを定義する。
+
+
+def _format_pool() -> dict[str, str]:
+    """使用する型の一覧。config content.formats に型名の配列を書くと絞り込める"""
+    keys = _cfg("content", "formats", default=[]) or []
+    picked = {k: _FORMATS[k] for k in keys if k in _FORMATS}
+    return picked if len(picked) >= 2 else dict(_FORMATS)
+
+
+def fetch_format_performance(max_posts: int = 60) -> tuple[list[str], list[str], str]:
+    """Notionの実績からフォーマット別の反応を集計する。
+    戻り値は (実績のよい型, 直近使った型, プロンプトに載せる要約文)。
+    プロパティ未作成・データ不足なら空を返し、従来どおりの動作にフォールバックする。"""
+    try:
+        notion = Client(auth=NOTION_TOKEN)
+        resp = notion.databases.query(
+            database_id=NOTION_DATABASE_ID,
+            filter={"property": PROP_STATUS,
+                    "multi_select": {"contains": STATUS_POSTED}},
+            sorts=[{"property": PROP_DATETIME, "direction": "descending"}],
+            page_size=max_posts,
+        )
+    except Exception as e:
+        print(f"  フォーマット実績の取得スキップ: {e}")
+        return [], [], ""
+
+    rows = []
+    for page in resp.get("results", []):
+        props = page["properties"]
+        sel   = props.get(PROP_FORMAT, {}).get("select") or {}
+        name  = (sel.get("name") or "").strip()
+        if not name:
+            continue
+        likes = props.get(PROP_LIKES, {}).get("number") or 0
+        imp   = props.get(PROP_IMPRESSIONS, {}).get("number") or 0
+        rows.append({"fmt": name, "likes": likes, "imp": imp,
+                     "er": (likes / imp * 100) if imp else 0.0})
+
+    # 直近に使った型（=今日は避けたい型）。実績の有無に関係なく拾う
+    recent = list(dict.fromkeys(r["fmt"] for r in rows[:6]))
+
+    measured = [r for r in rows if r["imp"] > 0]
+    by_fmt: dict[str, list[dict]] = {}
+    for r in measured:
+        by_fmt.setdefault(r["fmt"], []).append(r)
+    # 2件以上ないと平均が偶然に振られるため、ランキングの対象外にする
+    ranked = sorted(((f, v) for f, v in by_fmt.items() if len(v) >= 2),
+                    key=lambda kv: -sum(x["er"] for x in kv[1]) / len(kv[1]))
+    if not ranked:
+        return [], recent, ""
+
+    summary = " / ".join(
+        f"{f}: 反応率{sum(x['er'] for x in v)/len(v):.2f}%"
+        f"・いいね平均{sum(x['likes'] for x in v)/len(v):.1f}（{len(v)}件）"
+        for f, v in ranked)
+    return [f for f, _ in ranked], recent, (
+        "【フォーマット別の実績（このアカウントの実データ）】\n" + summary)
+
+
+def plan_post_formats(count: int, now: datetime) -> tuple[list[dict], str]:
+    """各投稿に「役割（実績 / 検証）」と「型」を割り当てる。
+
+    実績枠 … 数字が取れている型を再利用して土台を作る
+    検証枠 … まだ試していない型をあえて当て、当たりを探す
+    直近に使った型は検証枠から外し、日替わりで並びが変わるようにしている。"""
+    pool   = _format_pool()
+    top, recent, summary = fetch_format_performance()
+
+    proven_n = int(_cfg("content", "proven_posts", default=2) or 0)
+    proven_n = max(0, min(proven_n, max(0, count - 1)))
+
+    # 日付シードで並びを変える。同じ日に何度実行しても結果は同じ
+    seed  = int(now.strftime("%Y%m%d"))
+    keys  = sorted(pool)
+    order = keys[seed % len(keys):] + keys[:seed % len(keys)]
+
+    proven = [f for f in top if f in pool][:proven_n]
+    for f in order:                      # 実績が足りないぶんは順送りで補う
+        if len(proven) >= proven_n:
+            break
+        if f not in proven:
+            proven.append(f)
+
+    fresh = [f for f in order if f not in proven and f not in recent]
+    if len(fresh) < count - proven_n:    # 候補が尽きたら直近使用の制限だけ外す
+        fresh += [f for f in order if f not in proven and f not in fresh]
+
+    plan = []
+    for i in range(count):
+        if i < proven_n:
+            role, fmt = "実績", proven[i]
+        else:
+            role, fmt = "検証", fresh[(i - proven_n) % len(fresh)]
+        plan.append({"role": role, "format": fmt, "guide": pool[fmt]})
+    return plan, summary
+
+
+def _voice_block() -> str:
+    """個人アカウントの文体ルール。config content.voice: company で無効化できる"""
+    if str(_cfg("content", "voice", default="personal")).strip().lower() == "company":
+        return ""
+    return (
+        "【文体 — 会社アカウントではなく「個人」として書く】\n"
+        "伸びるのは会社の発信ではなく、人の発信です。中の人1人の言葉として書いてください。\n"
+        "- 主語は「私」。会社名を主語にしない（×「弊社では〜」→ ○「私は〜」）\n"
+        "- 実際に自分がやった・見た・言われたことを最低1つ入れる。伝聞や一般論だけで書かない\n"
+        "- 断定を避けた広報表現は禁止（「〜させていただきます」「〜と考えております」"
+        "「ぜひご活用ください」「お役に立てれば幸いです」）\n"
+        "- 告知・宣伝・CTAは書かない。プロフィール誘導もしない\n"
+        "- 完璧に整えない。迷いや失敗、まだ答えが出ていないことをそのまま書いてよい\n"
+        "- 読者を「皆様」ではなく「あなた」か、呼びかけなしで書く\n\n"
+    )
+
+
 # ── Claude AI 投稿生成 ────────────────────────────────────
 def generate_posts_with_claude(
     news_items: list[str], trending: list[dict], count: int = 5,
     insights: str = "", weekday_ja: str = "", daily_focus: str = "",
     recent_themes: list[str] | None = None, patterns: str = "",
-    weekly_theme: str = "",
+    weekly_theme: str = "", plan: list[dict] | None = None,
+    format_stats: str = "",
 ) -> list[dict]:
     news_text  = "\n".join(f"・{item}" for item in news_items) or "（情報なし）"
     # 参考トレンドは「実数つき全文」で渡す。数字があることで
@@ -812,8 +969,39 @@ def generate_posts_with_claude(
         "タイプ配分のルールは守りつつ、テーマ選定と切り口をこのフォーカスに寄せること。\n\n"
     ) if daily_focus else ""
 
-    prompt = (
+    # 投稿ごとに「役割（実績/検証）」と「型」を割り当てて、構造の重複を防ぐ。
+    # 実績枠は数字が取れている型の再現、検証枠は当たりを探すための実験。
+    plan_block = ""
+    if plan:
+        lines = []
+        for i, p in enumerate(plan, start=1):
+            mark = ("実績枠｜過去に数字が取れている型。ここは外さない"
+                    if p["role"] == "実績" else
+                    "検証枠｜当たりを探す実験。型を守りきることを最優先")
+            lines.append(f"投稿{i}: 【{p['format']}】（{mark}）\n    構造: {p['guide']}")
+        plan_block = (
+            f"{format_stats}\n\n" if format_stats else ""
+        ) + (
+            "【今日の投稿設計 — 1件ごとに“構造”を変える】\n"
+            "『同じような投稿ばかり』と言われる原因は、テーマではなく文章の構造が毎回同じことです。\n"
+            "以下の割り当てに従い、指定された型の構造で書いてください。\n\n"
+            + "\n".join(lines) +
+            "\n\n厳守事項:\n"
+            "- 各投稿の format フィールドに、割り当てられた型名をそのまま入れること\n"
+            "- 2件以上が同じ構造・同じ書き出しパターンになってはいけない\n"
+            "- 検証枠は「無難に寄せる」ことを禁止する。実績枠と見た目が変わらないなら失敗\n"
+            "- 型と投稿タイプ（A〜D）が噛み合わない場合は、型を優先しタイプの方を差し替える\n\n"
+        )
+
+    persona = (
+        "あなたは、会社の広報担当ではなく「中の人」個人としてX・Threadsを運用している人です"
+        f"{company_str}。\n"
+        "自分の実体験と考えを、友人に話すように書きます。\n"
+        if _voice_block() else
         f"あなたはX・Threadsで累計10万フォロワーを獲得してきたプロのSNSマーケターです{company_str}。\n"
+    )
+    prompt = (
+        persona +
         "インプレッションではなく「保存・フォロー・リプライ」を最大化する投稿を設計します。\n"
         f"ターゲット読者: {target_audience}\n"
         f"トーン: {tone}\n"
@@ -826,6 +1014,8 @@ def generate_posts_with_claude(
         f"{dedup_block}"
         f"{weekly_block}"
         f"{focus_block}"
+        f"{plan_block}"
+        f"{_voice_block()}"
         "【投稿タイプと配分】\n"
         f"A. 実践ノウハウ型（{n_a}件）— フォロワー獲得の主力。保存されることが目的\n"
         "   - 読んだ人が「明日そのままマネできる」具体的な手順・使い方・テクニック\n"
@@ -955,6 +1145,13 @@ def generate_posts_with_claude(
         "- A/B型: 本文で書ききれなかった補足・つまずきやすいポイント・応用ワザ\n"
         "- C/D型: 本文の裏話・もう一歩踏み込んだ本音\n"
         "- 「詳しくはプロフィールへ」等の宣伝は禁止。純粋に価値を追加する\n\n"
+        "【連投スレッド（thread）— 型が「連投スレッド」の投稿だけ】\n"
+        "割り当てられた型が「連投スレッド」の投稿にだけ、thread 配列を付けてください。\n"
+        "- 本文（text）の続きを2〜3個。各120〜200文字\n"
+        "- 1要素＝1トピックに絞る。前の投稿を読まないと意味が通らない書き方は避ける\n"
+        "- 最後の要素で締める（まとめ or 今日やる一歩）\n"
+        "- thread を付けた投稿には reply を書かない（threadが本文の続きを兼ねる）\n"
+        "- それ以外の型の投稿には thread を付けない\n\n"
         "【出力前のセルフチェック】\n"
         "各投稿について次を確認し、満たさない場合は書き直してから出力すること:\n"
         "1. 1行目だけ読んで、続きが読みたくなるか？\n"
@@ -966,15 +1163,19 @@ def generate_posts_with_claude(
         "各投稿には hook_alt として、本文の1行目とは\"別の切り口\"の代案を1つ必ず付けること。\n"
         "本文の1行目と代案は、異なるパターン（例: 数字インパクト vs 損失回避）にすること。\n"
         "出稿前に編集長が強い方を採用する。\n\n"
-        "以下のJSON形式のみを出力してください（説明文不要）:\n"
+        "以下のJSON形式のみを出力してください（説明文不要）。"
+        "format には割り当てられた型名をそのまま入れること:\n"
         "[\n"
         '  {"text":"X向け投稿文","hook_alt":"別案の1行目","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
-        '"type":"ノウハウ","theme":"テーマ","needs_image":false},\n'
+        '"type":"ノウハウ","format":"箇条書き","theme":"テーマ","needs_image":false},\n'
+        '  {"text":"導入となるX向け投稿文","text_threads":"Threads向け投稿文",'
+        '"thread":["2投稿目の続き","3投稿目の締め"],'
+        '"type":"ノウハウ","format":"連投スレッド","theme":"テーマ","needs_image":false},\n'
         '  {"text":"X向け投稿文","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
-        '"type":"ノウハウ","theme":"テーマ","needs_image":true,'
+        '"type":"ノウハウ","format":"体験談ストーリー","theme":"テーマ","needs_image":true,'
         '"charts":[{"chart_type":"list","title":"...","items":[...]}]},\n'
         '  {"text":"数字を含むX向け投稿文","text_threads":"Threads向け投稿文","reply":"セルフリプライ",'
-        '"type":"データ","theme":"テーマ","needs_image":true,'
+        '"type":"データ","format":"数字分解","theme":"テーマ","needs_image":true,'
         '"charts":[{"role":"起","chart_type":"list","title":"...","items":[...]},'
         '{"role":"承","chart_type":"matrix","title":"...",'
         '"groups":[{"label":"系統A","items":[{"head":"項目","text":"補足"}]},'
@@ -1057,7 +1258,11 @@ def review_posts_with_claude(posts: list[dict],
         "5. Threads版: 450文字以内で、X版のコピペになっていないか（口調が会話調に変わっているか）\n"
         "6. 図解: title が結論型か。flow/list のテキストが簡潔か（28文字以内）\n\n"
         "【絶対に守るルール】\n"
-        "- JSONの構造・キー名は変えない（text, text_threads, reply, type, theme, needs_image, charts, role など）\n"
+        "- JSONの構造・キー名は変えない（text, text_threads, reply, thread, type, format, theme, "
+        "needs_image, charts, role など）\n"
+        "- format と thread は指定された型を成立させるための情報なので、削除・変更しない\n"
+        "- 構造（箇条書き・会話・連投など）は元原稿の型を維持する。読みやすさのために"
+        "型を崩して整えるのは禁止\n"
         "- 投稿の件数を増減させない。順番も変えない\n"
         "- 良い投稿はそのまま残す。全部を書き直す必要はない\n"
         "- 各投稿に \"edited\" フィールド（true/false）を追加し、書き直した場合のみ true にする\n\n"
@@ -1104,14 +1309,20 @@ def save_to_notion(posts: list[dict], image_urls: dict) -> int:
             properties[PROP_THREADS_TEXT] = {
                 "rich_text": [{"text": {"content": threads_text[:2000]}}]
             }
-        reply_text = (post.get("reply") or "").strip()
-        if reply_text:
+        # 連投スレッドは「---」区切りで1つのプロパティに保存し、
+        # poster.py 側が順にリプライとしてぶら下げる（Notionの列は増やさない）
+        thread = [str(t).strip() for t in (post.get("thread") or []) if str(t).strip()]
+        segments = thread or [s for s in [(post.get("reply") or "").strip()] if s]
+        if segments:
             properties[PROP_REPLY_TEXT] = {
-                "rich_text": [{"text": {"content": reply_text[:2000]}}]
+                "rich_text": [{"text": {"content": "\n---\n".join(segments)[:2000]}}]
             }
         post_type = (post.get("type") or "").strip()
         if post_type:
             properties[PROP_POST_TYPE] = {"select": {"name": post_type[:50]}}
+        post_format = (post.get("format") or "").strip()
+        if post_format:
+            properties[PROP_FORMAT] = {"select": {"name": post_format[:50]}}
         if i in image_urls:
             urls = image_urls[i]
             if isinstance(urls, str):  # 旧形式（単一URL）との互換
@@ -1125,7 +1336,7 @@ def save_to_notion(posts: list[dict], image_urls: dict) -> int:
         # 任意プロパティ（Notion側に未作成でも保存が失敗しないように、
         # エラーに名前が含まれていたら外して再試行する）
         optional_props = [PROP_THREADS_TEXT, PROP_REPLY_TEXT, PROP_POST_TYPE,
-                          PROP_IMAGE_URLS]
+                          PROP_FORMAT, PROP_IMAGE_URLS]
 
         try:
             for _attempt in range(len(optional_props) + 1):
@@ -1222,6 +1433,14 @@ def run():
         print(f"  {weekday_ja}曜フォーカス: {daily_focus[:30]}...")
 
     posts_per_day = _cfg("content", "posts_per_day", default=5)
+
+    print("投稿フォーマットの割り当て中...")
+    plan, format_stats = plan_post_formats(posts_per_day, now)
+    for i, p in enumerate(plan, start=1):
+        print(f"  投稿{i}: [{p['role']}] {p['format']}")
+    if not format_stats:
+        print("  ※ フォーマット別の実績はまだ蓄積中（順送りで割り当て）")
+
     print("Claude AIで投稿文生成中...")
     try:
         posts = generate_posts_with_claude(news, trending, count=posts_per_day,
@@ -1230,7 +1449,9 @@ def run():
                                            daily_focus=daily_focus,
                                            recent_themes=recent_themes,
                                            patterns=patterns,
-                                           weekly_theme=weekly_theme)
+                                           weekly_theme=weekly_theme,
+                                           plan=plan,
+                                           format_stats=format_stats)
     except Exception as e:
         notify_error("投稿生成（daily_generator.py）",
                      f"Claude API呼び出しが全リトライ失敗: {e}")
@@ -1248,6 +1469,12 @@ def run():
     if _cfg("content", "editor_review", default=True):
         print("編集長レビュー中...")
         posts = review_posts_with_claude(posts, news)
+
+    # AIがformatを落とした場合に備え、割り当てた型で補完しておく
+    # （実績の集計はこの値を使うため、空のままだと学習が進まない）
+    for i, post in enumerate(posts):
+        if not (post.get("format") or "").strip() and i < len(plan):
+            post["format"] = plan[i]["format"]
 
     # X無料アカウント向けの文字数ガード（上限超過をAIで短縮）
     posts = enforce_x_length(posts)

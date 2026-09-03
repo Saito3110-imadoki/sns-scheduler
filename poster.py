@@ -5,6 +5,7 @@ Notionデータベースから「未投稿」レコードを取得し、
 """
 
 import os
+import re
 import sys
 import io
 import time
@@ -58,8 +59,8 @@ def _env(name: str, prefix: str = "", required: bool = True) -> str:
 
 
 # ── 設定値 ────────────────────────────────────────────────
-NOTION_TOKEN       = os.environ["NOTION_TOKEN"]
-NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
+NOTION_TOKEN       = os.environ["NOTION_TOKEN"].strip()
+NOTION_DATABASE_ID = os.environ["NOTION_DATABASE_ID"].strip()
 
 PROP_TEXT         = _cfg("notion", "properties", "text",         default="投稿文")
 PROP_THREADS_TEXT = _cfg("notion", "properties", "threads_text", default="Threads用文面")
@@ -68,7 +69,9 @@ PROP_DATETIME     = _cfg("notion", "properties", "datetime",     default="投稿
 PROP_PLATFORM     = _cfg("notion", "properties", "platform",     default="媒体")
 PROP_STATUS       = _cfg("notion", "properties", "status",       default="ステータス")
 PROP_IMAGE_URL    = _cfg("notion", "properties", "image_url",    default="画像URL")
+PROP_IMAGE_URLS   = _cfg("notion", "properties", "image_urls",   default="画像URL一覧")
 PROP_TWEET_ID     = _cfg("notion", "properties", "tweet_id",     default="X投稿ID")
+PROP_REPLY_TO     = _cfg("notion", "properties", "reply_to",     default="返信先URL")
 PROP_THREADS_ID   = _cfg("notion", "properties", "threads_post_id", default="Threads投稿ID")
 
 STATUS_PENDING = "未投稿"
@@ -128,6 +131,28 @@ def extract_reply_text(page: dict) -> str:
     return ""
 
 
+def split_reply_segments(text: str) -> list[str]:
+    """リプライ文面を連投スレッドの各投稿に分割する。
+    「---」だけの行が区切り。区切りがなければ従来どおり1件のリプライとして扱う。"""
+    if not text:
+        return []
+    parts = [p.strip() for p in re.split(r"^\s*-{3,}\s*$", text, flags=re.MULTILINE)]
+    return [p for p in parts if p]
+
+
+def extract_reply_to_id(page: dict) -> str:
+    """返信先URL（他アカウントの投稿へのリプ周り用）からツイートIDを取り出す。
+    未設定なら空文字列＝通常の新規投稿として扱う。"""
+    prop = page["properties"].get(PROP_REPLY_TO, {})
+    url  = ""
+    if prop.get("type") == "url":
+        url = prop.get("url") or ""
+    elif prop.get("type") == "rich_text":
+        url = "".join(p["plain_text"] for p in prop.get("rich_text", []))
+    m = re.search(r"/status/(\d+)", url or "")
+    return m.group(1) if m else ""
+
+
 def extract_platform(page: dict) -> str:
     prop = page["properties"].get(PROP_PLATFORM, {})
     if prop.get("type") == "select":
@@ -156,6 +181,19 @@ def extract_image_url(page: dict) -> str:
     if prop.get("type") == "url":
         return prop.get("url") or ""
     return ""
+
+
+def extract_image_urls(page: dict) -> list[str]:
+    """画像URLのリストを取得。「画像URL一覧」（複数枚）があればそれを優先し、
+    なければ単一の「画像URL」を1件のリストとして返す"""
+    prop = page["properties"].get(PROP_IMAGE_URLS, {})
+    if prop.get("type") == "rich_text":
+        raw = "".join(p["plain_text"] for p in prop.get("rich_text", []))
+        urls = [u.strip() for u in raw.replace(",", "\n").split("\n") if u.strip()]
+        if urls:
+            return urls[:4]
+    single = extract_image_url(page)
+    return [single] if single else []
 
 
 def update_status(notion: Client, page_id: str, status: str,
@@ -230,8 +268,8 @@ def download_image(url: str) -> bytes | None:
 
 
 # ── X（Twitter）投稿 ──────────────────────────────────────
-def post_to_x(text: str, image_url: str = "") -> str:
-    """投稿してツイートIDを返す。失敗時は空文字列。"""
+def post_to_x(text: str, image_urls: list[str] | None = None) -> str:
+    """投稿してツイートIDを返す。失敗時は空文字列。画像は最大4枚。"""
     consumer_key    = os.environ["X_API_KEY"]
     consumer_secret = os.environ["X_API_KEY_SECRET"]
     access_token    = os.environ["X_ACCESS_TOKEN"]
@@ -244,20 +282,26 @@ def post_to_x(text: str, image_url: str = "") -> str:
         access_token_secret=access_secret,
     )
 
-    media_ids = None
-    if image_url:
-        image_data = download_image(image_url)
-        if image_data:
+    media_ids = []
+    urls = [u for u in (image_urls or []) if u][:4]
+    if urls:
+        auth   = tweepy.OAuth1UserHandler(consumer_key, consumer_secret,
+                                          access_token, access_secret)
+        api_v1 = tweepy.API(auth)
+        for k, url in enumerate(urls, start=1):
+            image_data = download_image(url)
+            if not image_data:
+                continue
             try:
-                auth   = tweepy.OAuth1UserHandler(consumer_key, consumer_secret,
-                                                  access_token, access_secret)
-                api_v1 = tweepy.API(auth)
-                media  = api_v1.media_upload(filename="post_image.png",
-                                             file=io.BytesIO(image_data))
-                media_ids = [media.media_id]
-                print("  X: 画像アップロード完了")
+                media = api_v1.media_upload(filename=f"post_image_{k}.png",
+                                            file=io.BytesIO(image_data))
+                media_ids.append(media.media_id)
             except Exception as e:
-                print(f"  X: 画像アップロードエラー（テキストのみで投稿）: {e}")
+                print(f"  X: 画像{k}アップロードエラー: {e}")
+        if media_ids:
+            print(f"  X: 画像アップロード完了（{len(media_ids)}枚）")
+        else:
+            print("  X: 画像アップロード全滅（テキストのみで投稿）")
 
     response = client.create_tweet(
         text=text,
@@ -268,8 +312,8 @@ def post_to_x(text: str, image_url: str = "") -> str:
     return ""
 
 
-def post_x_reply(tweet_id: str, text: str) -> bool:
-    """投稿済みツイートに自分でリプライをぶら下げる（スレッド化）"""
+def post_x_reply(tweet_id: str, text: str) -> str:
+    """指定ツイートにリプライをぶら下げる。成功で新しいツイートIDを返す"""
     client = tweepy.Client(
         consumer_key=os.environ["X_API_KEY"],
         consumer_secret=os.environ["X_API_KEY_SECRET"],
@@ -277,7 +321,28 @@ def post_x_reply(tweet_id: str, text: str) -> bool:
         access_token_secret=os.environ["X_ACCESS_TOKEN_SECRET"],
     )
     response = client.create_tweet(text=text, in_reply_to_tweet_id=tweet_id)
-    return response.data is not None
+    return str(response.data["id"]) if response.data else ""
+
+
+def post_x_thread(tweet_id: str, segments: list[str]) -> int:
+    """連投スレッドを順にぶら下げる。直前の投稿に繋げていくことで1本の流れにする。
+    途中で失敗したらそこで打ち切り、成功した件数を返す（本文は投稿済みのため巻き戻さない）"""
+    parent = tweet_id
+    posted = 0
+    for i, seg in enumerate(segments, start=1):
+        try:
+            time.sleep(3)
+            new_id = post_x_reply(parent, _trim_for_x(seg))
+            if not new_id:
+                print(f"  X スレッド{i}: ✗ 投稿失敗（ここで打ち切り）")
+                break
+            parent  = new_id
+            posted += 1
+            print(f"  X スレッド{i}: ✓ 投稿成功")
+        except Exception as e:
+            print(f"  X スレッド{i}: ✗ エラー（ここで打ち切り）: {e}")
+            break
+    return posted
 
 
 # ── Telegraph アップロード ────────────────────────────────
@@ -299,41 +364,81 @@ def upload_to_telegraph(image_data: bytes) -> str:
 
 
 # ── Threads 投稿 ──────────────────────────────────────────
-def post_to_threads(text: str, image_url: str = "") -> str:
-    """投稿して公開後のメディアIDを返す。失敗時は空文字列。"""
+def post_to_threads(text: str, image_urls: list[str] | None = None) -> str:
+    """投稿して公開後のメディアIDを返す。失敗時は空文字列。
+    画像1枚 → 通常の画像投稿 / 2枚以上 → カルーセル投稿。
+    画像は元URL（GitHub Pages）を直接使い、Threadsが取得できない場合のみ
+    Telegraph経由にフォールバックする（Telegraphは再圧縮で画質が落ちるため）。"""
     user_id = os.environ["THREADS_USER_ID"]
     token   = os.environ["THREADS_ACCESS_TOKEN"]
     base    = f"https://graph.threads.net/v1.0/{user_id}"
+    urls    = [u for u in (image_urls or []) if u][:4]
 
-    if image_url:
-        image_data = download_image(image_url)
-        if image_data:
-            telegraph_url = upload_to_telegraph(image_data)
-            if telegraph_url:
-                image_url = telegraph_url
+    def _create(img_url: str = "", is_item: bool = False,
+                children: list[str] | None = None) -> str:
+        if children:
+            params = {"media_type": "CAROUSEL",
+                      "children": ",".join(children),
+                      "text": text, "access_token": token}
+        elif img_url:
+            params = {"media_type": "IMAGE", "image_url": img_url,
+                      "access_token": token}
+            if is_item:
+                params["is_carousel_item"] = "true"
             else:
-                print("  Threads: 画像アップロード失敗のためテキストのみで投稿")
-                image_url = ""
+                params["text"] = text
+        else:
+            params = {"media_type": "TEXT", "text": text,
+                      "access_token": token}
+        r = requests.post(f"{base}/threads", params=params, timeout=30)
+        r.raise_for_status()
+        return r.json()["id"]
 
-    if image_url:
-        params = {
-            "media_type": "IMAGE",
-            "image_url": image_url,
-            "text": text,
-            "access_token": token,
-        }
-    else:
-        params = {
-            "media_type": "TEXT",
-            "text": text,
-            "access_token": token,
-        }
+    def _create_image_with_fallback(img_url: str, is_item: bool) -> str:
+        """元URL → Telegraph の順で画像コンテナ作成。失敗時は空文字列"""
+        try:
+            return _create(img_url=img_url, is_item=is_item)
+        except Exception as e:
+            print(f"  Threads: 元URL失敗 → Telegraph切替: {e}")
+            image_data    = download_image(img_url)
+            telegraph_url = upload_to_telegraph(image_data) if image_data else ""
+            if telegraph_url:
+                try:
+                    return _create(img_url=telegraph_url, is_item=is_item)
+                except Exception as e2:
+                    print(f"  Threads: Telegraph経由も失敗: {e2}")
+            return ""
 
-    r = requests.post(f"{base}/threads", params=params, timeout=30)
-    r.raise_for_status()
-    container_id = r.json()["id"]
+    container_id = ""
+    wait_sec     = 5
 
-    time.sleep(5)
+    # ① カルーセル（2枚以上）
+    if len(urls) >= 2:
+        items = []
+        for u in urls:
+            item_id = _create_image_with_fallback(u, is_item=True)
+            if item_id:
+                items.append(item_id)
+        if len(items) >= 2:
+            try:
+                container_id = _create(children=items)
+                wait_sec     = 15  # カルーセルは取り込みが遅い
+                print(f"  Threads: カルーセル投稿（{len(items)}枚）")
+            except Exception as e:
+                print(f"  Threads: カルーセル作成失敗 → 1枚投稿に切替: {e}")
+
+    # ② 単一画像（1枚 or カルーセル失敗時）
+    if not container_id and urls:
+        container_id = _create_image_with_fallback(urls[0], is_item=False)
+        if container_id:
+            wait_sec = 10
+            print("  Threads: 画像1枚で投稿")
+
+    # ③ テキストのみ
+    if not container_id:
+        container_id = _create("")
+
+    time.sleep(wait_sec)
 
     r = requests.post(
         f"{base}/threads_publish",
@@ -371,16 +476,22 @@ def run():
         text         = _trim_for_x(extract_text(page))
         threads_text = _trim_for_threads(extract_threads_text(page)
                                          or extract_text(page))  # 未設定ならX文面を使用
-        reply_text   = _trim_for_x(extract_reply_text(page))
+        segments     = split_reply_segments(extract_reply_text(page))
+        reply_to_id  = extract_reply_to_id(page)
         platform     = extract_platform(page)
         sched_dt     = extract_datetime(page)
-        image_url    = extract_image_url(page)
+        img_urls     = extract_image_urls(page)
+
+        # 返信先URLがある＝他アカウントへのリプライ（リプ周り）。
+        # Threadsには出さず、X上で対象投稿への返信としてのみ配信する
+        if reply_to_id:
+            platform = PLATFORM_X
 
         label = text[:30] + ("..." if len(text) > 30 else "")
         print(f"\n  投稿文  : {label}")
-        print(f"  媒体    : {platform}")
+        print(f"  媒体    : {platform}" + ("（リプ周り）" if reply_to_id else ""))
         print(f"  予定日時: {sched_dt}")
-        print(f"  画像URL : {image_url or '（なし）'}")
+        print(f"  画像    : {str(len(img_urls)) + '枚' if img_urls else '（なし）'}")
         if threads_text != text:
             print(f"  Threads文面: あり（{len(threads_text)}文字）")
 
@@ -396,22 +507,21 @@ def run():
 
         try:
             if platform in (PLATFORM_X, PLATFORM_BOTH):
-                tweet_id = post_to_x(text, image_url)
-                print(f"  X       : {'✓ 投稿成功 ID=' + tweet_id if tweet_id else '✗ 投稿失敗'}")
+                if reply_to_id:
+                    tweet_id = post_x_reply(reply_to_id, text)
+                    print(f"  X 返信  : {'✓ 投稿成功 ID=' + tweet_id if tweet_id else '✗ 投稿失敗'}")
+                else:
+                    tweet_id = post_to_x(text, img_urls)
+                    print(f"  X       : {'✓ 投稿成功 ID=' + tweet_id if tweet_id else '✗ 投稿失敗'}")
 
-                # セルフリプライ（失敗しても投稿自体は成功扱い）
-                if tweet_id and reply_text:
-                    try:
-                        time.sleep(3)
-                        if post_x_reply(tweet_id, reply_text):
-                            print("  X リプライ: ✓ 投稿成功")
-                        else:
-                            print("  X リプライ: ✗ 投稿失敗（本文は投稿済み）")
-                    except Exception as re_err:
-                        print(f"  X リプライ: ✗ エラー（本文は投稿済み）: {re_err}")
+                # セルフリプライ／連投スレッド（失敗しても本文は成功扱い）
+                if tweet_id and segments:
+                    posted = post_x_thread(tweet_id, segments)
+                    if posted < len(segments):
+                        print(f"  ※ スレッド {posted}/{len(segments)} 件のみ投稿されました")
 
             if platform in (PLATFORM_THREADS, PLATFORM_BOTH):
-                threads_id = post_to_threads(threads_text, image_url)
+                threads_id = post_to_threads(threads_text, img_urls)
                 print(f"  Threads : {'✓ 投稿成功 ID=' + threads_id if threads_id else '✗ 投稿失敗'}")
 
             x_ok       = bool(tweet_id)   if platform in (PLATFORM_X, PLATFORM_BOTH) else True
