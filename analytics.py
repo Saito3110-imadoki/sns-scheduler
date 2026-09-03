@@ -278,9 +278,45 @@ def update_follower_history(x_followers: int | None,
 
 
 # ── メイン ────────────────────────────────────────────────
+def check_threads_token() -> bool:
+    """Threadsトークンの生死を毎日確認する。
+
+    Threadsの長期トークンは60日で失効する。失効に気づかないと、
+    投稿がエラー扱いになったまま何週間も止まり続けるため、
+    切れた時点でLINEに通知して気づけるようにしている。"""
+    token = os.environ.get("THREADS_ACCESS_TOKEN", "").strip()
+    if not token:
+        return True  # Threadsを使わない運用なら何もしない
+    try:
+        r = requests.get("https://graph.threads.net/v1.0/me",
+                         params={"fields": "id,username", "access_token": token},
+                         timeout=15)
+    except Exception as e:
+        print(f"  Threadsトークン確認スキップ（通信エラー）: {e}")
+        return True  # 一時的な通信断で誤通知しない
+
+    if r.status_code == 200:
+        print(f"  Threadsトークン: 有効（@{r.json().get('username', '?')}）")
+        return True
+    if r.status_code in (400, 401):
+        print("  Threadsトークン: ✗ 無効／期限切れ")
+        notify_error(
+            "Threadsのアクセストークンが失効しました",
+            "Threads投稿が失敗し、投稿が「エラー」のまま止まります。\n"
+            "60日で失効する仕様のため、再発行して GitHub Secrets の\n"
+            "THREADS_ACCESS_TOKEN を更新してください。\n"
+            "※ 更新するまでX投稿も「投稿済」に変わりません。")
+        return False
+    print(f"  Threadsトークン: 確認できず（HTTP {r.status_code}）")
+    return True
+
+
 def run():
     now = datetime.now(JST)
     print(f"[{now.strftime('%Y-%m-%d %H:%M')} JST] パフォーマンス計測 開始")
+
+    print("Threadsトークン確認中...")
+    check_threads_token()
 
     notion = get_notion_client()
 

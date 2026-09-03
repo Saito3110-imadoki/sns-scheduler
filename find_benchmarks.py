@@ -51,7 +51,7 @@ def _pad(s: str, width: int) -> str:
     return s + " " * max(0, width - w)
 
 
-def collect(keywords: list[str], per_query: int = 10) -> list[dict]:
+def collect(keywords: list[str], per_query: int = 30) -> list[dict]:
     """キーワードごとに、直近で反応の良い投稿と投稿主を集める"""
     client = tweepy.Client(
         consumer_key=os.environ["X_API_KEY"],
@@ -110,16 +110,23 @@ def collect(keywords: list[str], per_query: int = 10) -> list[dict]:
     return rows
 
 
-def rank(rows: list[dict], top: int) -> list[dict]:
+def rank(rows: list[dict], top: int, min_followers: int = 300) -> tuple[list[dict], int]:
     """アカウント単位に集約する。
     フォロワーが多いだけの大手より、フォロワー比で反応が取れているアカウントの方が
-    型として参考になるため、絶対数と反応率の両方を出す。"""
+    型として参考になるため、絶対数と反応率の両方を出す。
+
+    ただしフォロワーが極端に少ないアカウントは「1000フォロワー比」が
+    異常な高値になり順位を壊すため、下限を設けて除外する。
+    戻り値は (候補, 除外した数)。"""
     by_user: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         by_user[r["username"]].append(r)
 
-    out = []
+    out, excluded = [], 0
     for username, hits in by_user.items():
+        if hits[0]["followers"] < min_followers:
+            excluded += 1
+            continue
         n     = len(hits)
         likes = sum(h["likes"] for h in hits) / n
         rts   = sum(h["rts"] for h in hits) / n
@@ -135,25 +142,37 @@ def rank(rows: list[dict], top: int) -> list[dict]:
             "keywords": "/".join(sorted({h["keyword"] for h in hits})),
             "sample": hits[0]["text"],
         })
+    # 複数キーワードで当たったアカウントほど、そのジャンルの中心にいる。
+    # 同点なら1本あたりのいいね数で並べる
     out.sort(key=lambda r: (r["hits"], r["likes"]), reverse=True)
-    return out[:top]
+    return out[:top], excluded
 
 
-def run(keywords: list[str], top: int) -> None:
+def run(keywords: list[str], top: int, min_followers: int = 300,
+        per_query: int = 30) -> None:
     if not keywords:
         print("キーワードがありません。config の topics.keywords_x を設定するか "
               "--keywords で指定してください")
         sys.exit(1)
 
     print(f"■ 検索キーワード: {' / '.join(keywords)}")
-    rows = collect(keywords)
+    rows = collect(keywords, per_query=per_query)
     print(f"  収集: {len(rows)}投稿")
     if not rows:
         print("\n候補が集まりませんでした。キーワードを見直すか、"
               "X APIのクレジット残高を確認してください。")
         return
 
-    ranked = rank(rows, top)
+    ranked, excluded = rank(rows, top, min_followers)
+    if excluded:
+        print(f"  除外: {excluded}アカウント"
+              f"（フォロワー{min_followers}人未満。1000フォロワー比が"
+              "異常値になり順位を壊すため）")
+    if not ranked:
+        print(f"\n条件に合う候補がありませんでした。"
+              f"--min-followers を下げるか、キーワードを見直してください。")
+        return
+
     print(f"\n■ ベンチマーク候補（{len(ranked)}件）")
     print("  アカウント              フォロワー  ヒット  いいね/本  1000フォロワー比  ヒットしたキーワード")
     print("  " + "-" * 96)
@@ -168,11 +187,19 @@ def run(keywords: list[str], top: int) -> None:
             print(f"    プロフィール: {r['bio'][:80]}")
         print(f"    投稿例: {r['sample']}")
 
+    weak = [r for r in ranked if r["hits"] < 2]
+    if weak:
+        print(f"\n  ※ ヒット1件だけの候補が{len(weak)}件あります。"
+              "たまたま1投稿が当たっただけの可能性があり、")
+        print("     手本として妥当かはプロフィールと投稿例で必ず確認してください。")
+
     print("\n■ 次の手順")
     print("  1. 上の候補から、自社と方向性が合うアカウントを3件選ぶ")
-    print("     ・フォロワー数より「1000フォロワー比」が高い方が型として参考になります")
+    print("     ・複数キーワードで当たった（ヒット数が多い）アカウントほど、"
+          "そのジャンルの中心にいます")
     print("     ・企業の公式アカウントより、個人アカウントの方が学べる型が多いです")
     print("     ・同業の競合より、少し隣接した分野の方が真似だと思われにくいです")
+    print("     ・プロフィールを読み、発信テーマが自社と重なるかを必ず確認してください")
     print("  2. config.yaml の topics.benchmark_accounts に @なしで書く")
     print("       benchmark_accounts:")
     if ranked:
@@ -186,9 +213,14 @@ def main() -> None:
     ap.add_argument("--keywords", nargs="*", default=None,
                     help="検索キーワード（未指定なら config の topics.keywords_x）")
     ap.add_argument("--top", type=int, default=12, help="表示する候補数（既定: 12）")
+    ap.add_argument("--min-followers", type=int, default=300,
+                    help="このフォロワー数未満のアカウントは除外（既定: 300）")
+    ap.add_argument("--per-query", type=int, default=30,
+                    help="1キーワードあたりに取得する投稿数。10〜100（既定: 30）")
     args = ap.parse_args()
     kws = args.keywords or (_cfg("topics", "keywords_x", default=[]) or [])
-    run([str(k) for k in kws][:5], args.top)
+    run([str(k) for k in kws][:5], args.top,
+        args.min_followers, max(10, min(100, args.per_query)))
 
 
 if __name__ == "__main__":

@@ -89,7 +89,11 @@ def get_notion_client() -> Client:
 
 
 def fetch_pending_posts(notion: Client) -> list[dict]:
-    """ステータスが「未投稿」かつ投稿日時が現在以前のレコードを取得"""
+    """ステータスが「未投稿」かつ投稿日時が現在以前のレコードを取得。
+
+    1回の実行で投稿する上限を設けている。承認待ちがまとめて承認されたとき、
+    数百件を一度に投稿するとスパム判定・凍結の恐れがあるため、
+    古いものから少しずつ配信して自然なペースに保つ。"""
     now_utc = datetime.now(timezone.utc).isoformat()
     response = notion.databases.query(
         database_id=NOTION_DATABASE_ID,
@@ -103,7 +107,16 @@ def fetch_pending_posts(notion: Client) -> list[dict]:
         },
         sorts=[{"property": PROP_DATETIME, "direction": "ascending"}],
     )
-    return response.get("results", [])
+    results = response.get("results", [])
+
+    limit = int(_cfg("content", "max_posts_per_run", default=3) or 0)
+    if limit > 0 and len(results) > limit:
+        print(f"  ※ 未投稿が{len(results)}件あります。"
+              f"一度に大量投稿するとスパム判定の恐れがあるため、"
+              f"今回は古い順に{limit}件だけ投稿します")
+        print("     （1回あたりの件数は config の content.max_posts_per_run で変更できます）")
+        return results[:limit]
+    return results
 
 
 def extract_text(page: dict) -> str:
