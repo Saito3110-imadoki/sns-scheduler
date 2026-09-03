@@ -1,16 +1,33 @@
-name: Doctor (事前チェック)
-
-# 本番投入の前に、各サービスの認証情報が正しいかを実際にAPIへpingして検証する。
-# Actionsタブ →「Doctor (事前チェック)」→ Run workflow で手動実行。
-# ログに ✅/❌ で結果が出る。1つでも❌があればワークフローは失敗（赤）になる。
+name: Auto Poster
 
 on:
+  schedule:
+    # 毎時00分に実行（JST 9:00〜23:00 = UTC 0:00〜14:00）
+    - cron: "0 0-14 * * *"
   workflow_dispatch:
 
 jobs:
-  doctor:
+  check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    outputs:
+      paused: ${{ steps.flag.outputs.paused }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: flag
+        name: 一時停止スイッチの確認
+        run: |
+          if [ -f .paused-post ]; then
+            echo "paused=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::現在停止中です。再開するには Actions →「一時停止スイッチ」→ 再開する を実行してください"
+          else
+            echo "paused=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  post:
+    needs: check
+    if: needs.check.outputs.paused != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
 
@@ -35,7 +52,7 @@ jobs:
       - name: 依存ライブラリのインストール
         run: pip install -r "${BASE}requirements.txt"
 
-      - name: 事前チェック実行
+      - name: 自動投稿実行
         env:
           NOTION_TOKEN:                ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID:          ${{ secrets.NOTION_DATABASE_ID }}
@@ -43,10 +60,6 @@ jobs:
           X_API_KEY_SECRET:            ${{ secrets.X_API_KEY_SECRET }}
           X_ACCESS_TOKEN:              ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_TOKEN_SECRET:       ${{ secrets.X_ACCESS_TOKEN_SECRET }}
-          ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
-          LINE_CHANNEL_ACCESS_TOKEN:   ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
-          LINE_USER_ID:                ${{ secrets.LINE_USER_ID }}
-          LINE_USER_ID2:               ${{ secrets.LINE_USER_ID2 }}
           THREADS_USER_ID:             ${{ secrets.THREADS_USER_ID }}
           THREADS_ACCESS_TOKEN:        ${{ secrets.THREADS_ACCESS_TOKEN }}
-        run: python "${BASE}doctor.py"
+        run: python "${BASE}poster.py"

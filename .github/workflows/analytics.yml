@@ -21,10 +21,18 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements.txt
+          cache-dependency-path: "**/requirements.txt"
+
+      - name: レイアウト判定（sns_scheduler/ or ルート直下）
+        run: |
+          if [ -f sns_scheduler/requirements.txt ]; then
+            echo "BASE=sns_scheduler/" >> "$GITHUB_ENV"
+          else
+            echo "BASE=" >> "$GITHUB_ENV"
+          fi
 
       - name: 依存ライブラリのインストール
-        run: pip install -r requirements.txt
+        run: pip install -r "${BASE}requirements.txt"
 
       - name: メトリクス取得・Notion更新
         env:
@@ -38,13 +46,13 @@ jobs:
           THREADS_ACCESS_TOKEN:      ${{ secrets.THREADS_ACCESS_TOKEN }}
           LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
           LINE_USER_ID:              ${{ secrets.LINE_USER_ID }}
-        run: python analytics.py
+        run: python "${BASE}analytics.py"
 
       - name: フォロワー履歴をコミット
         run: |
           git config user.name  "SNS Scheduler Bot"
           git config user.email "bot@github.com"
           git pull --rebase || true
-          git add follower_history.json 2>/dev/null || true
+          git add "${BASE}follower_history.json" 2>/dev/null || true
           git diff --cached --quiet || git commit -m "Update follower history $(date +%Y-%m-%d)"
           git push || true

@@ -1,0 +1,87 @@
+name: 一時停止スイッチ（停止 / 再開）
+
+# 投稿の「生成」と「投稿」を、Actionsのボタンから停止・再開できるスイッチ。
+# 停止するとフラグファイルがコミットされ、対象のワークフローは自動でスキップされます。
+# （スケジュール実行自体は動きますが、中身が実行されないので投稿は出ません）
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "停止するか、再開するか"
+        type: choice
+        options:
+          - 停止する
+          - 再開する
+        default: 停止する
+      target:
+        description: "対象"
+        type: choice
+        options:
+          - 生成のみ（Notionへの投稿案づくり）
+          - 投稿のみ（X/Threadsへの配信）
+          - 両方
+        default: 生成のみ（Notionへの投稿案づくり）
+
+jobs:
+  switch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: スイッチを切り替え
+        run: |
+          set -e
+          ACTION="${{ inputs.action }}"
+          TARGET="${{ inputs.target }}"
+
+          touch_flag() { echo "paused at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$1"; }
+
+          case "$TARGET" in
+            *両方*)   FILES=".paused-generate .paused-post" ;;
+            *投稿のみ*) FILES=".paused-post" ;;
+            *)        FILES=".paused-generate" ;;
+          esac
+
+          for f in $FILES; do
+            if [ "$ACTION" = "停止する" ]; then
+              touch_flag "$f"
+              echo "::notice::$f を作成しました（停止）"
+            else
+              rm -f "$f"
+              echo "::notice::$f を削除しました（再開）"
+            fi
+          done
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A .paused-generate .paused-post 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "::notice::状態は変わりませんでした（すでにその設定です）"
+            exit 0
+          fi
+          git commit -m "chore: $TARGET を$ACTION"
+          # 他ワークフローの並行pushと競合することがあるためリトライする
+          for i in 1 2 3 4; do
+            git pull --rebase && git push && exit 0
+            echo "push retry $i"; sleep $((5 * i))
+          done
+          echo "::error::スイッチの保存に失敗しました"
+          exit 1
+
+      - name: 現在の状態
+        run: |
+          echo "### 現在の稼働状態" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f .paused-generate ]; then
+            echo "- 生成（Daily Post Generator）: ⏸ **停止中**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- 生成（Daily Post Generator）: ▶️ 稼働中" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f .paused-post ]; then
+            echo "- 投稿（Auto Poster）: ⏸ **停止中**" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- 投稿（Auto Poster）: ▶️ 稼働中" >> "$GITHUB_STEP_SUMMARY"
+          fi
