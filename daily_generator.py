@@ -435,6 +435,97 @@ def fetch_rss_news(max_items: int = 12) -> list[str]:
     return items[:max_items]
 
 
+# X APIの障害（クレジット切れ・認証切れ）を運用者に気づかせるための記録。
+# ここが空でないまま何週間も走ると、外部トレンドを見ずに投稿し続けることになる。
+_API_WARNINGS: list[str] = []
+
+
+def _note_api_warning(msg: str) -> None:
+    if msg not in _API_WARNINGS:
+        _API_WARNINGS.append(msg)
+
+
+def _classify_x_error(err: str) -> str:
+    """X APIのエラー文から、運用者が取るべき対応がわかる説明を作る"""
+    if "402" in err:
+        return ("X APIのクレジットが切れています（402）。"
+                "Developer Portalで残高を補充するまで、トレンド分析と実績計測は止まります")
+    if "401" in err:
+        return "X APIの認証に失敗しています（401）。アクセストークンを再発行してください"
+    if "403" in err:
+        return "X APIの権限が不足しています（403）。アプリの権限設定を確認してください"
+    if "429" in err:
+        return "X APIのレート上限に達しました（429）。時間をおいて再実行してください"
+    return ""
+
+
+_UA = ("Mozilla/5.0 (compatible; sns-scheduler/1.0; "
+       "+https://social-post-pilot.com)")
+
+
+def fetch_keyword_trends(max_items: int = 8) -> list[str]:
+    """キーワードごとの直近の話題を、認証不要の検索RSSから拾う。
+    X APIが使えないときでも「いま何が話題か」を失わないための代替ソース。
+
+    Googleニュース → はてなブックマークの順に試し、先に取れた方を使う
+    （片方が仕様変更や遮断で落ちても、もう片方で拾えるようにしている）。"""
+    import urllib.parse
+
+    def _sources(kw: str) -> list[str]:
+        q = urllib.parse.quote(str(kw))
+        return [
+            f"https://news.google.com/rss/search?q={q}+when:3d&hl=ja&gl=JP&ceid=JP:ja",
+            f"https://b.hatena.ne.jp/search/text?q={q}&mode=rss&sort=recent",
+        ]
+
+    items: list[str] = []
+    for kw in X_KEYWORDS[:4]:
+        for url in _sources(kw):
+            try:
+                feed = feedparser.parse(url, agent=_UA)
+                titles = [e.get("title", "").strip() for e in feed.entries[:3]]
+                titles = [t for t in titles if t]
+            except Exception as e:
+                print(f"  キーワードトレンド取得スキップ（{kw}）: {e}")
+                continue
+            if titles:
+                items.extend(f"［{kw}］{t}" for t in titles)
+                break        # 1キーワードにつき1ソース取れれば十分
+    return items[:max_items]
+
+
+def fetch_top_own_posts(max_posts: int = 30, top: int = 10) -> list[dict]:
+    """自アカウントで実際に伸びた投稿を、本文＋実数つきで取り出す。
+    X APIが使えないときに『勝ちパターン分析』の材料として使う。"""
+    try:
+        notion = Client(auth=NOTION_TOKEN)
+        resp = notion.databases.query(
+            database_id=NOTION_DATABASE_ID,
+            filter={"property": PROP_STATUS,
+                    "multi_select": {"contains": STATUS_POSTED}},
+            sorts=[{"property": PROP_DATETIME, "direction": "descending"}],
+            page_size=max_posts,
+        )
+    except Exception as e:
+        print(f"  自アカウント実績の取得スキップ: {e}")
+        return []
+
+    rows = []
+    for page in resp.get("results", []):
+        props = page["properties"]
+        text  = "".join(p["plain_text"]
+                        for p in props.get(PROP_TEXT, {}).get("title", []))
+        likes = props.get(PROP_LIKES, {}).get("number") or 0
+        rts   = props.get(PROP_RETWEETS, {}).get("number") or 0
+        imp   = props.get(PROP_IMPRESSIONS, {}).get("number") or 0
+        if text and (likes or imp):
+            rows.append({"text": text, "likes": likes, "rts": rts,
+                         "reps": 0, "imp": imp})
+    rows.sort(key=lambda r: r["rts"] * 5 + r["likes"] * 3 + r["imp"] * 0.01,
+              reverse=True)
+    return rows[:top]
+
+
 def fetch_trending_tweets(max_tweets: int = 12) -> list[dict]:
     """伸びている参考投稿を、本文全文＋エンゲージメント実数つきで収集する。
     数字を添えることで「なぜ伸びたか」をAIが学習できるようにする。
@@ -460,6 +551,9 @@ def fetch_trending_tweets(max_tweets: int = 12) -> list[dict]:
                 )
             except Exception as e:
                 print(f"  検索スキップ（{query}）: {e}")
+                hint = _classify_x_error(str(e))
+                if hint:
+                    _note_api_warning(hint)
                 return out
             for tw in (resp.data or []):
                 m = tw.public_metrics or {}
@@ -478,6 +572,12 @@ def fetch_trending_tweets(max_tweets: int = 12) -> list[dict]:
         for kw in keywords:
             collected.extend(_search(f"{kw} lang:ja -is:retweet -is:reply"))
         # ベンチマークアカウント（業界の手本）
+        if not benchmarks:
+            print("  ※ topics.benchmark_accounts が未設定のため、"
+                  "手本アカウントの分析は行われません")
+            _note_api_warning(
+                "config の topics.benchmark_accounts が空です。"
+                "手本にしたいアカウントを3件設定すると、業界の勝ちパターンを継続学習できます")
         for acct in benchmarks[:3]:
             handle = str(acct).lstrip("@")
             collected.extend(_search(f"from:{handle} -is:retweet -is:reply"))
@@ -495,27 +595,41 @@ def fetch_trending_tweets(max_tweets: int = 12) -> list[dict]:
         return uniq[:max_tweets]
     except Exception as e:
         print(f"  X API検索スキップ: {e}")
+        hint = _classify_x_error(str(e))
+        _note_api_warning(hint or f"X APIの検索に失敗しました: {e}")
         return []
 
 
-def analyze_winning_patterns(trending: list[dict]) -> str:
+def analyze_winning_patterns(trending: list[dict],
+                             own_posts: list[dict] | None = None) -> str:
     """伸びている参考投稿を分析し「今このジャンルで効いている型」を抽出する。
     汎用ノウハウではなく直近の実データから型を学ぶための1パス。
+
+    X APIが使えないときは、自アカウントで実際に伸びた投稿を材料に切り替える。
+    外部が見えないからといって分析ごと止めると、学習が完全に止まってしまうため。
     失敗しても空文字を返し、生成処理は止めない。"""
-    if len(trending) < 3:
-        return ""
+    source = "外部の伸びている投稿"
+    posts  = trending
+    if len(posts) < 3:
+        posts  = [p for p in (own_posts or []) if p.get("text")]
+        source = "このアカウントで実際に伸びた投稿"
+        if len(posts) < 3:
+            return ""
+        print(f"  勝ちパターン分析: 外部トレンドが取得できないため、{source}で代替します")
+
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not key:
         return ""
     sample = "\n\n".join(
-        f"[いいね{t['likes']} / RT{t['rts']} / リプ{t['reps']}]\n{t['text']}"
-        for t in trending[:10])
+        f"[いいね{t['likes']} / RT{t['rts']} / リプ{t.get('reps', 0)}"
+        f"{' / imp' + str(t['imp']) if t.get('imp') else ''}]\n{t['text']}"
+        for t in posts[:10])
     try:
         client = anthropic.Anthropic(api_key=key)
         msg = client.messages.create(
             model=CLAUDE_MODEL, max_tokens=700,
             messages=[{"role": "user", "content": (
-                "あなたはSNSの分析官です。以下は、いま実際に伸びている投稿群です。"
+                f"あなたはSNSの分析官です。以下は、{source}です。"
                 "エンゲージメント数値と本文を照らし合わせ、"
                 "『いま このジャンルで効いている型』を抽出してください。\n\n"
                 f"{sample}\n\n"
@@ -1412,10 +1526,18 @@ def run():
     trending = fetch_trending_tweets()
     print(f"  Xトレンド: {len(trending)}件（参考: 伸びている投稿）")
 
+    # X APIが使えないときは、キーワードのニュース検索で話題を補う。
+    # 「外の話題が一切見えない状態で書き続ける」のを防ぐための代替ソース
+    if not trending:
+        kw_trends = fetch_keyword_trends()
+        if kw_trends:
+            print(f"  代替トレンド: {len(kw_trends)}件（キーワードのニュース検索）")
+            news.extend(kw_trends)
+
     print("勝ちパターン分析中...")
-    patterns = analyze_winning_patterns(trending)
+    patterns = analyze_winning_patterns(trending, own_posts=fetch_top_own_posts())
     if not patterns:
-        print("  勝ちパターン分析: 参考投稿が少ないためスキップ")
+        print("  勝ちパターン分析: 参考にできる投稿が3件未満のためスキップ")
 
     print("投稿実績データ取得中...")
     insights = fetch_performance_insights()
@@ -1567,6 +1689,19 @@ def run():
 
     _mode_label = "未投稿（このまま自動投稿されます）" if AUTO_APPROVE else "承認待ち"
     print(f"\n完了 — {saved}件の投稿案（図解付き {image_count}件）を「{_mode_label}」で保存しました")
+
+    # 機能が黙って劣化したまま何週間も走るのを防ぐため、最後に必ず知らせる
+    if _API_WARNINGS:
+        print("\n⚠ 分析機能が制限された状態で生成しました:")
+        for w in _API_WARNINGS:
+            print(f"  - {w}")
+        try:
+            notify_error(
+                "投稿生成は成功／分析機能が制限中",
+                "\n".join(f"・{w}" for w in _API_WARNINGS) +
+                "\n\n投稿は作られていますが、外部トレンドを見ずに書かれています。")
+        except Exception as e:
+            print(f"  警告通知の送信に失敗: {e}")
 
 
 if __name__ == "__main__":
