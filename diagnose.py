@@ -253,6 +253,46 @@ def _print_segment(title: str, seg: list[tuple], min_n: int = 3) -> None:
               f"  {b['th_lk_pp']:>9.2f} → {a['th_lk_pp']:>7.2f}  {_delta(a['th_lk_pp'], b['th_lk_pp'])}")
 
 
+def _measured(r: dict) -> bool:
+    """計測値が入っているか。X・Threadsのどちらにも表示数がない行は
+    「反応がなかった投稿」ではなく「計測されていない投稿」として扱う"""
+    return r["x_imp"] > 0 or r["th_views"] > 0
+
+
+def _print_health(rows: list[dict], now: datetime) -> list[dict]:
+    """比較の前に、そもそもデータが正常かを確認する。
+    投稿が止まっている・計測が抜けている場合は、前後比較より先にそちらが原因。
+    戻り値は計測値のある行だけに絞ったリスト。"""
+    print("\n■ データの健全性")
+    if not rows:
+        print("  投稿済のレコードが1件もありません")
+        return []
+
+    last     = rows[-1]["dt"]
+    gap_days = (now.date() - last.date()).days
+    print(f"  最終投稿日: {last.date()}（{gap_days}日前）")
+
+    measured   = [r for r in rows if _measured(r)]
+    unmeasured = len(rows) - len(measured)
+    print(f"  計測済み  : {len(measured)}本 / 未計測 {unmeasured}本")
+
+    if gap_days >= 3:
+        print()
+        print(f"  ⚠ {gap_days}日間、投稿済のレコードが増えていません。")
+        print("     『いいねが付かない』の原因は文面ではなく、投稿自体が止まっていることです。")
+        print("     次を順に確認してください:")
+        print("       1. Actions の Auto Poster が失敗していないか（X APIのクレジット切れなど）")
+        print("       2. Notionに「承認待ち」のまま溜まっていないか（未投稿に変更が必要）")
+        print("       3. Notionに「エラー」ステータスの行が増えていないか")
+
+    if unmeasured:
+        print()
+        print(f"  ※ 未計測の{unmeasured}本は、いいね0ではなく「数字が取れていない」投稿です。")
+        print("     そのまま平均に入れると実力より低く出るため、以降の比較からは除外します。")
+        print("     （--include-unmeasured を付けると含めて計算します）")
+    return measured
+
+
 def _verdict(before: dict, after: dict) -> None:
     print("\n■ 判定")
     x_reach_down  = after["x_imp_pp"] < before["x_imp_pp"] * 0.85
@@ -293,7 +333,7 @@ def _verdict(before: dict, after: dict) -> None:
         print("     増やさない限り、文面の改善は数字に表れません。")
 
 
-def run(weeks: int, min_age_days: int) -> None:
+def run(weeks: int, min_age_days: int, include_unmeasured: bool = False) -> None:
     token = os.environ.get("NOTION_TOKEN", "").strip()
     db_id = os.environ.get("NOTION_DATABASE_ID", "").strip()
     if not token or not db_id:
@@ -314,11 +354,16 @@ def run(weeks: int, min_age_days: int) -> None:
     mature = [r for r in rows if r["dt"] <= cutoff]
 
     print(f"  取得: {len(rows)}本（うち比較対象 {len(mature)}本）")
-    if len(mature) < 10:
-        print("\n  比較できる投稿が少なすぎます。--weeks を伸ばして再実行してください。")
-        return
 
     _print_weekly(weekly_table(rows))
+    measured = _print_health(rows, now)
+    if not include_unmeasured:
+        mature = [r for r in mature if _measured(r)]
+
+    if len(mature) < 10:
+        print(f"\n  比較できる投稿が{len(mature)}本しかありません。"
+              "--weeks を伸ばして再実行してください。")
+        return
 
     # 前期・後期を同じ本数で二分し、条件をそろえて比較する
     half   = len(mature) // 2
@@ -355,8 +400,10 @@ def main() -> None:
     ap.add_argument("--weeks", type=int, default=12, help="分析対象の週数（既定: 12）")
     ap.add_argument("--min-age-days", type=int, default=3,
                     help="計測が育ちきったとみなす日数。これより新しい投稿は比較から除外（既定: 3）")
+    ap.add_argument("--include-unmeasured", action="store_true",
+                    help="表示数が記録されていない投稿も、いいね0として比較に含める")
     args = ap.parse_args()
-    run(args.weeks, args.min_age_days)
+    run(args.weeks, args.min_age_days, args.include_unmeasured)
 
 
 if __name__ == "__main__":
