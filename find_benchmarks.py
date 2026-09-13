@@ -199,8 +199,23 @@ def run(keywords: list[str], top: int, min_impressions: int = 5000,
 
     if not ranked:
         print(f"\n表示回数{min_impressions:,}以上の投稿が見つかりませんでした。")
-        print("  基準を下げるか、キーワードを見直してください。例:")
-        print(f"    python find_benchmarks.py --min-impressions {min_impressions // 2}")
+        # 「下げてください」だけでは、いくつにすればいいか分からない。
+        # 実際の分布と、上位2割に入る目安を示して次の一手を決められるようにする
+        imps = sorted((r["imp"] for r in rows if r["imp"] > 0), reverse=True)
+        if imps:
+            top5 = " / ".join(f"{v:,}" for v in imps[:5])
+            median = imps[len(imps) // 2]
+            # 上位20%に入る値を目安にする（母数が少ないときは最大値の半分）
+            idx = max(0, int(len(imps) * 0.2) - 1)
+            suggest = imps[idx] if len(imps) >= 5 else max(imps) // 2
+            # 見やすいよう1000単位に丸める
+            suggest = max(500, round(suggest / 500) * 500)
+            print(f"\n  実際の表示回数（上位5件）: {top5}")
+            print(f"  中央値: {median:,} / 最大: {imps[0]:,}（{len(imps)}投稿）")
+            print(f"\n  このジャンルなら {suggest:,} くらいが「伸びている投稿」の目安です:")
+            print(f"    Actions の min_impressions を {suggest} にして再実行してください")
+        else:
+            print("  基準を下げるか、キーワードを見直してください。")
         return
 
     print(f"\n■ ベンチマーク候補（{len(ranked)}件）")

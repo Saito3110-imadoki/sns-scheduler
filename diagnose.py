@@ -350,7 +350,16 @@ def _print_health(rows: list[dict], now: datetime) -> list[dict]:
     return measured
 
 
-def _verdict(before: dict, after: dict) -> None:
+def _per_week(rows: list[dict]) -> float:
+    """投稿頻度（本/週）。期間が短すぎるときは0を返す"""
+    if len(rows) < 2:
+        return 0.0
+    days = (rows[-1]["dt"] - rows[0]["dt"]).days
+    return round(len(rows) / (days / 7), 1) if days >= 7 else 0.0
+
+
+def _verdict(before: dict, after: dict,
+             cadence: tuple[float, float] | None = None) -> None:
     print("\n■ 判定")
     x_reach_down  = after["x_imp_pp"] < before["x_imp_pp"] * 0.85
     x_er_down     = after["x_er"]     < before["x_er"]     * 0.85
@@ -375,9 +384,19 @@ def _verdict(before: dict, after: dict) -> None:
         if x_reach_down and th_reach_down:
             print("  → 両媒体でERも表示数も低下しています。")
             print("     ただし『表示数』が両媒体そろって大きく落ちるのは、文面では説明できません。")
-            print("     計測が途中で止まっていた場合、後期の投稿だけ数字が育たず")
-            print("     見かけ上こうなります。まず Analytics を実行して数字を最新化し、")
-            print("     そのうえでこの診断を再実行してから判断してください。")
+            # 投稿頻度が落ちていれば、露出減はアカウントの活動量で説明がつく。
+            # 文面を直しても戻らないので、ここを取り違えないようにする
+            b_wk, a_wk = cadence or (0.0, 0.0)
+            if b_wk and a_wk and a_wk < b_wk * 0.7:
+                drop = (a_wk - b_wk) / b_wk * 100
+                print()
+                print(f"     投稿頻度が {b_wk}本/週 → {a_wk}本/週（{drop:+.0f}%）に落ちています。")
+                print("     X・Threadsとも、更新が止まったアカウントには露出を割り当てません。")
+                print("     表示数の低下はこの頻度低下で説明でき、文面の問題とは考えにくいです。")
+                print("     → 直すべきは文面ではなく『毎日投稿が続く状態』です。")
+            else:
+                print("     計測が途中で止まっていた場合も同じ見え方になります。")
+                print("     Analytics を実行して数字を最新化してから再判断してください。")
         else:
             print("  → 両媒体でER低下。文面（コンテンツ）側の要因が濃厚です。")
             print("     下のセグメント比較で、どの条件の投稿が落ちたかを確認してください。")
@@ -438,7 +457,9 @@ def run(weeks: int, min_age_days: int, include_unmeasured: bool = False) -> None
     print(f"\n  前期: {before[0]['dt'].date()}〜{before[-1]['dt'].date()}（{len(before)}本）")
     print(f"  後期: {after[0]['dt'].date()}〜{after[-1]['dt'].date()}（{len(after)}本）")
 
-    _verdict(_agg(before), _agg(after))
+    print(f"  投稿頻度: {_per_week(before)}本/週 → {_per_week(after)}本/週")
+
+    _verdict(_agg(before), _agg(after), (_per_week(before), _per_week(after)))
 
     for key, title in [
         ("question", "締め方別（問いかけで終わるか）"),
