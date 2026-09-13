@@ -281,6 +281,32 @@ def download_image(url: str) -> bytes | None:
 
 
 # ── X（Twitter）投稿 ──────────────────────────────────────
+def classify_x_error(err: str) -> str:
+    """X APIのエラー文から、運用者が取るべき対応がわかる説明を作る。
+    生のエラー文だけだと原因にたどり着けず、投稿停止に何週間も気づけないため。"""
+    e = err.lower()
+    if "402" in err or "credits depleted" in e:
+        return ("X APIのクレジット切れ（402）です。"
+                "Developer Portalで残高を補充してください")
+    if "401" in err or "unauthorized" in e:
+        return ("X APIの認証エラー（401）です。アクセストークンを再発行し、"
+                "GitHub Secrets の X_ACCESS_TOKEN / X_ACCESS_TOKEN_SECRET を更新してください")
+    if "duplicate" in e:
+        return ("同じ内容を重複投稿しようとして拒否されました。"
+                "Notionに同一文面の行が無いか確認してください")
+    if "too long" in e or "tweet text is too long" in e:
+        return ("本文がXの文字数上限を超えています。無料アカウントの場合は "
+                "config の content.x_char_limit を 280 にしてください"
+                "（現在の設定: "
+                f"{X_CHAR_LIMIT if X_CHAR_LIMIT else '制限なし'}）")
+    if "403" in err or "forbidden" in e:
+        return ("X APIに拒否されました（403）。アプリの権限が Read and write か、"
+                "文字数超過・重複投稿・アカウント制限に該当していないか確認してください")
+    if "429" in err or "too many requests" in e:
+        return "X APIのレート上限（429）です。時間をおいて再実行してください"
+    return ""
+
+
 def post_to_x(text: str, image_urls: list[str] | None = None) -> str:
     """投稿してツイートIDを返す。失敗時は空文字列。画像は最大4枚。"""
     consumer_key    = os.environ["X_API_KEY"]
@@ -550,8 +576,11 @@ def run():
                 error_count += 1
 
         except Exception as e:
-            detail = f"{text[:30]}... / {e}"
+            hint   = classify_x_error(str(e))
+            detail = f"{text[:30]}... / {e}" + (f"\n→ {hint}" if hint else "")
             print(f"  エラー発生: {e}", file=sys.stderr)
+            if hint:
+                print(f"  → {hint}", file=sys.stderr)
             notify_error("自動投稿（poster.py）", detail)
             try:
                 update_status(notion, page_id, STATUS_ERROR)
