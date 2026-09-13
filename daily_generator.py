@@ -1487,14 +1487,22 @@ def send_line_notification(count: int, image_count: int):
 
     now      = datetime.now(JST)
     img_info = f"うち図解付き {image_count}件\n" if image_count else ""
+    # 完全自動モードでは「承認してください」は誤案内になる。
+    # 止める操作（却下）だけを伝える
+    if AUTO_APPROVE:
+        action = ("⚠️ 自動投稿モードです。このまま予定時刻に配信されます。\n\n"
+                  "止めたい投稿があれば、配信前に👇\n"
+                  "❌ ステータスを「却下」に変更してください")
+    else:
+        action = ("Notionで内容を確認してください👇\n"
+                  "✅ 投稿したい → ステータスを「未投稿」に変更\n"
+                  "❌ 投稿しない → ステータスを「却下」に変更\n\n"
+                  "承認した投稿は自動で配信されます！")
     text = (
         f"📱 今日のSNS投稿案 {count}件が届きました！\n"
         f"{img_info}\n"
         f"📅 {now.strftime('%Y年%m月%d日')}\n\n"
-        "Notionで内容を確認してください👇\n"
-        "✅ 投稿したい → ステータスを「未投稿」に変更\n"
-        "❌ 投稿しない → ステータスを「却下」に変更\n\n"
-        "承認した投稿は自動で配信されます！"
+        f"{action}"
     )
 
     try:
