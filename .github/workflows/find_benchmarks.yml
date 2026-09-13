@@ -18,6 +18,10 @@ on:
         description: "表示する候補数"
         required: false
         default: "12"
+      min_impressions:
+        description: "この表示回数以上の投稿を出したアカウントだけを候補にする"
+        required: false
+        default: "5000"
 
 jobs:
   find-benchmarks:
@@ -56,4 +60,5 @@ jobs:
         run: |
           python "${BASE}find_benchmarks.py" \
             --top "${{ inputs.top }}" \
+            --min-impressions "${{ inputs.min_impressions }}" \
             ${{ inputs.keywords && format('--keywords {0}', inputs.keywords) || '' }}
