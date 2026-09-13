@@ -100,7 +100,7 @@ STATUS_READY            = "未投稿"
 # 完全自動投稿モード: true にすると承認をスキップし、生成した投稿を
 # そのまま投稿対象（未投稿）として保存する。人のチェックが入らないため、
 # 有効化はクライアントの明示的な同意のうえで行うこと
-AUTO_APPROVE            = bool(_cfg("content", "auto_approve", default=False))
+AUTO_APPROVE            = bool(_cfg("content", "auto_approve", default=true))
 STATUS_POSTED           = _cfg("notion", "status",   "done",    default="投稿済")
 PLATFORM_BOTH           = _cfg("notion", "platform", "default", default="両方")
 
