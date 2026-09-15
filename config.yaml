@@ -109,7 +109,7 @@ topics:
   # ※@は不要。最大3件まで使用
   # Actions →「Find Benchmarks (手本アカウント候補の抽出)」を実行すると、
   # 実データから候補が一覧で出るので、その中から3件選んでここに書いてください。
-  benchmark_accounts: []
+  benchmark_accounts: [yamaguchi_take][yuuuu19860221][masahirochaen]
 
   # X（Twitter）での検索キーワード
   # トレンド検索・代替トレンド検索・手本アカウント探索の3つで使われます。
