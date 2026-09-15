@@ -71,7 +71,7 @@ content:
   # false（既定）… 生成した投稿は「承認待ち」で保存。承認した投稿だけ配信される
   # true          … 承認をスキップし、生成した投稿がそのまま予定時刻に自動投稿される
   # ※人のチェックが入らないため、クライアントの明示的な同意のうえで有効化すること
-  auto_approve: false
+  auto_approve: true
 
   # AIアイキャッチ画像（fal.ai / FLUX schnell）。図解チャートが付かない投稿に
   # 文字なしの映える画像を補完する。要: GitHub Secretに FAL_KEY を登録。
