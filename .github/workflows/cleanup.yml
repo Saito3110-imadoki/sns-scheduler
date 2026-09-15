@@ -1,0 +1,59 @@
+name: Cleanup (承認待ちの棚卸し)
+
+# 承認が滞ってたまった「承認待ち」のうち、古くて使えなくなったものを
+# 「却下」に一括変更する。Actionsタブ →「Cleanup (承認待ちの棚卸し)」→ Run workflow。
+#
+# 安全側の設計:
+#   - 既定は確認のみ（apply を true にしたときだけ変更する）
+#   - 対象は「承認待ち」だけ。未投稿・投稿済・エラーには触れない
+#   - まず apply を false のまま実行し、対象件数を確認してください
+
+on:
+  workflow_dispatch:
+    inputs:
+      older_than:
+        description: "この日数より古い承認待ちを対象にする"
+        required: false
+        default: "14"
+      apply:
+        description: "実際に却下する（false = 確認のみ）"
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: "**/requirements.txt"
+
+      - name: レイアウト判定（sns_scheduler/ or ルート直下）
+        run: |
+          if [ -f sns_scheduler/requirements.txt ]; then
+            echo "BASE=sns_scheduler/" >> "$GITHUB_ENV"
+          else
+            echo "BASE=" >> "$GITHUB_ENV"
+          fi
+
+      - name: 依存ライブラリのインストール
+        run: pip install -r "${BASE}requirements.txt"
+
+      - name: 承認待ちの棚卸し
+        env:
+          NOTION_TOKEN:       ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          python "${BASE}cleanup.py" \
+            --older-than "${{ inputs.older_than }}" \
+            ${{ inputs.apply && '--apply' || '' }}
