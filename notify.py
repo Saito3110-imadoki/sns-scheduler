@@ -81,6 +81,22 @@ def notify_error(context: str, detail: str) -> None:
     send_line_message(text)
 
 
+def notify_warning(context: str, detail: str) -> None:
+    """障害ではないが対応したほうがよいことのLINE通知。
+
+    エラーと同じ見た目で送ると『毎日エラーが届く』状態になり、
+    本物の障害に気づけなくなるため、見出しと記号を分けている。"""
+    now  = datetime.now(JST)
+    text = (
+        f"💡 マカセル お知らせ\n\n"
+        f"📍 {context}\n"
+        f"・{detail}\n"
+        f"🕐 {now.strftime('%Y/%m/%d %H:%M')} JST\n\n"
+        "投稿は通常どおり作られています。お時間のあるときにご確認ください。"
+    )
+    send_line_message(text)
+
+
 def notify_post_complete(posted: int, errors: int) -> None:
     """自動投稿完了通知"""
     now  = datetime.now(JST)

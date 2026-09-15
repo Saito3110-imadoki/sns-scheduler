@@ -572,12 +572,12 @@ def fetch_trending_tweets(max_tweets: int = 12) -> list[dict]:
         for kw in keywords:
             collected.extend(_search(f"{kw} lang:ja -is:retweet -is:reply"))
         # ベンチマークアカウント（業界の手本）
+        # 未設定は障害ではなく設定の余地。毎日LINEに流すと本物の障害が
+        # 埋もれるため、ログにだけ出す
         if not benchmarks:
             print("  ※ topics.benchmark_accounts が未設定のため、"
                   "手本アカウントの分析は行われません")
-            _note_api_warning(
-                "config の topics.benchmark_accounts が空です。"
-                "手本にしたいアカウントを3件設定すると、業界の勝ちパターンを継続学習できます")
+            print("     （Actions →「Find Benchmarks」で候補を抽出できます）")
         for acct in benchmarks[:3]:
             handle = str(acct).lstrip("@")
             collected.extend(_search(f"from:{handle} -is:retweet -is:reply"))
@@ -1698,14 +1698,15 @@ def run():
     _mode_label = "未投稿（このまま自動投稿されます）" if AUTO_APPROVE else "承認待ち"
     print(f"\n完了 — {saved}件の投稿案（図解付き {image_count}件）を「{_mode_label}」で保存しました")
 
-    # 機能が黙って劣化したまま何週間も走るのを防ぐため、最後に必ず知らせる
+    # APIの失敗は放置すると機能が止まったまま何週間も走るため、必ず知らせる。
+    # （設定の未記入など、障害でないものはここに載せない）
     if _API_WARNINGS:
         print("\n⚠ 分析機能が制限された状態で生成しました:")
         for w in _API_WARNINGS:
             print(f"  - {w}")
         try:
             notify_error(
-                "投稿生成は成功／分析機能が制限中",
+                "外部APIの障害で分析機能が止まっています",
                 "\n".join(f"・{w}" for w in _API_WARNINGS) +
                 "\n\n投稿は作られていますが、外部トレンドを見ずに書かれています。")
         except Exception as e:
