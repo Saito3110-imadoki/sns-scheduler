@@ -276,7 +276,13 @@ def check_posting_pipeline():
                 with open(p, encoding="utf-8") as f:
                     cfg = yaml.safe_load(f) or {}
             except Exception as e:
-                _record(WARN, "config.yaml", f"読み込み失敗: {e}")
+                # 設定が読めない＝全項目が既定値に戻る。警告ではなく不合格にする
+                _record(NG, "config.yaml",
+                        f"書式が壊れています → 全設定が既定値に戻ります: "
+                        f"{str(e).splitlines()[0]}")
+                _record(NG, "config.yaml の直し方",
+                        "アカウント名の @ を外すか \"@name\" と引用符で囲んでください"
+                        "（YAMLでは @ で行を始められません）")
             break
     content = cfg.get("content", {}) if isinstance(cfg, dict) else {}
     auto    = bool(content.get("auto_approve", False))

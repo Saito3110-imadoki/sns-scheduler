@@ -62,7 +62,15 @@ if _CONFIG_PATH.exists():
             _CFG = yaml.safe_load(_f) or {}
         print(f"[config] {_CONFIG_PATH.name} 読み込み完了")
     except Exception as _ce:
-        print(f"[config] 読み込みエラー（デフォルト値を使用）: {_ce}")
+        # 設定が読めないまま既定値で走ると、会社名・ブランドカラー・投稿時刻・
+        # 承認モードまで別物になった投稿が出てしまう。黙って続行してはいけない
+        print(f"[config] ❌ config.yaml の書式が壊れています: {_ce}", file=sys.stderr)
+        print("[config] 設定を読めないまま投稿を作ると、会社名やブランドカラー、"
+              "承認モードが既定値に戻った投稿が出るため中止します。", file=sys.stderr)
+        print("[config] よくある原因: アカウント名の @ をそのまま書いている "
+              "（YAMLでは @ で始められません。@なしで書くか \"@name\" と"
+              "引用符で囲んでください）", file=sys.stderr)
+        sys.exit(1)
 else:
     print("[config] config.yaml が見つかりません。デフォルト値を使用します。")
 

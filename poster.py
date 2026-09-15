@@ -35,7 +35,13 @@ if _CONFIG_PATH.exists():
         with open(_CONFIG_PATH, encoding="utf-8") as _f:
             _CFG = yaml.safe_load(_f) or {}
     except Exception as _ce:
-        print(f"[config] 読み込みエラー（デフォルト値を使用）: {_ce}")
+        # 設定が読めないと投稿先の媒体・文字数上限・プロパティ名まで既定値に戻る。
+        # 誤った設定で配信してしまうより、止めて気づけるほうが安全
+        print(f"[config] ❌ config.yaml の書式が壊れています: {_ce}", file=sys.stderr)
+        print("[config] 誤った設定で配信しないよう中止します。"
+              "アカウント名の @ をそのまま書いていないか確認してください"
+              "（YAMLでは @ で始められません）", file=sys.stderr)
+        sys.exit(1)
 
 
 def _cfg(*keys, default=None):
