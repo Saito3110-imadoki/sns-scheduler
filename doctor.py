@@ -257,6 +257,96 @@ def check_threads():
         _record(NG, "Threads", str(e))
 
 
+def check_posting_pipeline():
+    """「なぜ投稿されないのか」を1回で切り分ける。
+
+    投稿が出ない原因は毎回この3つのどれか:
+      ・承認制のままで、承認待ちに溜まっている
+      ・一時停止スイッチが入っている（ワークフローは緑のまま止まる）
+      ・配信対象（未投稿）が0件
+    認証が全部OKでも投稿されないことがあるため、独立して確認する。"""
+    print("\n■ 投稿の配信状況")
+
+    # ① 設定モード
+    cfg = {}
+    for p in (Path(__file__).resolve().parent / "config.yaml", Path("config.yaml")):
+        if p.exists():
+            try:
+                import yaml
+                with open(p, encoding="utf-8") as f:
+                    cfg = yaml.safe_load(f) or {}
+            except Exception as e:
+                _record(WARN, "config.yaml", f"読み込み失敗: {e}")
+            break
+    content = cfg.get("content", {}) if isinstance(cfg, dict) else {}
+    auto    = bool(content.get("auto_approve", False))
+    _record(OK if auto else WARN, "投稿モード",
+            "完全自動投稿（承認不要）" if auto else
+            "承認制 — Notionで「承認待ち」→「未投稿」に変えないと配信されません")
+
+    # ② 一時停止スイッチ（存在すると、ワークフローは成功のまま投稿だけ止まる）
+    for flag, label in ((".paused-post", "自動投稿"), (".paused-generate", "投稿生成")):
+        if Path(flag).exists():
+            _record(NG, f"{label}の一時停止",
+                    f"{flag} があるため停止中。Actions →「一時停止スイッチ」→ 再開する")
+        else:
+            _record(OK, f"{label}の一時停止", "停止していません")
+
+    # ③ Notionのステータス内訳（配信される行が実際にあるか）
+    token = _env("NOTION_TOKEN")
+    db_id = _env("NOTION_DATABASE_ID")
+    if not token or not db_id:
+        return
+    try:
+        from datetime import datetime, timedelta, timezone
+        from notion_client import Client
+        jst    = timezone(timedelta(hours=9))
+        notion = Client(auth=token)
+        counts: dict[str, int] = {}
+        due    = 0
+        now    = datetime.now(jst)
+        cursor = None
+        while True:
+            kw = {"database_id": db_id, "page_size": 100}
+            if cursor:
+                kw["start_cursor"] = cursor
+            resp = notion.databases.query(**kw)
+            for page in resp.get("results", []):
+                props  = page["properties"]
+                names  = [s.get("name", "") for s in
+                          (props.get("ステータス", {}).get("multi_select") or [])]
+                for n in names:
+                    counts[n] = counts.get(n, 0) + 1
+                if "未投稿" in names:
+                    d = (props.get("投稿日時", {}).get("date") or {}).get("start")
+                    try:
+                        if d and datetime.fromisoformat(d).astimezone(jst) <= now:
+                            due += 1
+                    except ValueError:
+                        pass
+            if not resp.get("has_more"):
+                break
+            cursor = resp.get("next_cursor")
+
+        summary = " / ".join(f"{k} {v}件" for k, v in
+                             sorted(counts.items(), key=lambda kv: -kv[1])) or "レコードなし"
+        _record(OK, "Notionの内訳", summary)
+
+        pending = counts.get("未投稿", 0)
+        if due:
+            _record(OK, "配信待ち", f"{due}件が配信時刻を過ぎています。次の毎時00分に投稿されます")
+        elif pending:
+            _record(OK, "配信待ち", f"未投稿{pending}件は、まだ配信予定時刻の前です")
+        elif auto:
+            _record(WARN, "配信待ち",
+                    "未投稿が0件です。次回の投稿生成を待つか、生成を手動実行してください")
+        else:
+            _record(WARN, "配信待ち",
+                    "未投稿が0件です。承認制のため、Notionで「未投稿」に変えるまで配信されません")
+    except Exception as e:
+        _record(WARN, "Notionの内訳", f"取得できませんでした: {e}")
+
+
 def main():
     ap = argparse.ArgumentParser(description="PostPilot 事前チェック")
     ap.add_argument("--client", help="clients/xxx.yaml（env_prefixを適用）")
@@ -274,6 +364,7 @@ def main():
     check_line()
     check_threads()
     check_ai_image()
+    check_posting_pipeline()
 
     ng = sum(1 for s, _ in _results if s == NG)
     ok = sum(1 for s, _ in _results if s == OK)
