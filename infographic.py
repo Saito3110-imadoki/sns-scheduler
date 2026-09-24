@@ -108,7 +108,7 @@ def _apply_branding(html: str, branding: dict) -> str:
             f'<img src="{logo_url}" '
             f'style="height:26px;opacity:0.75;object-fit:contain;">'
             if logo_url else
-            f'<span style="font-size:11px;color:{_MUTED};font-weight:700;'
+            f'<span style="font-size:13px;color:{_MUTED};font-weight:700;'
             f'letter-spacing:1px;opacity:0.85;">{_e(company_name)}</span>'
         )
         watermark = (
@@ -142,14 +142,14 @@ body{{
 
 
 def _header(title: str, subtitle: str = "") -> str:
-    sub = (f'<div style="margin-top:6px;font-size:17px;color:{_MUTED};'
+    sub = (f'<div style="margin-top:8px;font-size:21px;color:{_MUTED};'
            f'font-weight:500;">{_e(subtitle)}</div>') if subtitle else ""
     return f"""
 <div style="display:flex;align-items:flex-start;padding:30px 52px 0;flex-shrink:0;">
   <div style="width:7px;background:linear-gradient(180deg,{_ACCENT},{_MAIN});
     border-radius:3px;min-height:64px;margin-right:20px;flex-shrink:0;"></div>
   <div>
-    <div style="font-size:36px;font-weight:900;letter-spacing:-0.5px;
+    <div style="font-size:44px;font-weight:900;letter-spacing:-0.5px;
       color:{_TEXT};line-height:1.25;">{_e(title)}</div>
     {sub}
   </div>
@@ -168,12 +168,12 @@ def _impact_footer(impact: str = "", caption: str = "") -> str:
   padding:15px 26px;margin:0 52px 26px;flex-shrink:0;
   display:flex;align-items:center;gap:16px;">
   <span style="display:flex;flex-shrink:0;">{bulb}</span>
-  <span style="font-size:19px;font-weight:800;color:#ffffff;
+  <span style="font-size:24px;font-weight:800;color:#ffffff;
     line-height:1.5;">{_hl(impact)}</span>
 </div>""")
     if caption:
         parts.append(
-            f'<div style="font-size:12px;color:{_MUTED};padding:0 52px 18px;'
+            f'<div style="font-size:15px;color:{_MUTED};padding:0 52px 18px;'
             f'flex-shrink:0;">{_e(caption)}</div>')
     return "\n".join(parts)
 
@@ -192,15 +192,15 @@ def _html_stat(chart: dict) -> str:
         icon  = _ICONS[i % len(_ICONS)]
 
         # 値の長さに応じてフォントサイズを調整
-        vsize = ("80px" if len(val) <= 3
-                 else "68px" if len(val) <= 5
-                 else "52px" if len(val) <= 8
-                 else "38px")
+        vsize = ("88px" if len(val) <= 3
+                 else "74px" if len(val) <= 5
+                 else "58px" if len(val) <= 8
+                 else "42px")
 
         ctx_html = (
-            f'<div style="font-size:11px;color:{_MUTED};letter-spacing:2px;'
+            f'<div style="font-size:14px;color:{_MUTED};letter-spacing:2px;'
             f'text-transform:uppercase;margin-bottom:6px;font-weight:600;">{_e(ctx)}</div>'
-        ) if ctx else '<div style="height:17px;"></div>'
+        ) if ctx else '<div style="height:20px;"></div>'
 
         cards.append(f"""
 <div style="flex:1;background:{_CARD};border:2px solid {_MAIN};border-radius:18px;
@@ -217,8 +217,8 @@ def _html_stat(chart: dict) -> str:
   <div style="font-size:{vsize};font-weight:900;color:{_ACCENT};line-height:1;
     letter-spacing:-2px;">{_e(val)}</div>
   <!-- ラベル -->
-  <div style="font-size:15px;color:{_TEXT};margin-top:14px;font-weight:600;
-    line-height:1.5;max-width:180px;">{_e(label)}</div>
+  <div style="font-size:20px;color:{_TEXT};margin-top:14px;font-weight:600;
+    line-height:1.45;max-width:210px;">{_e(label)}</div>
 </div>""")
 
     return _base(f"""
@@ -242,21 +242,21 @@ def _html_bar(chart: dict) -> str:
         pct = int(val / max_val * 100)
         rows.append(f"""
 <div style="display:flex;align-items:center;gap:18px;">
-  <div style="width:160px;font-size:14px;color:{_TEXT};text-align:right;
+  <div style="width:180px;font-size:18px;color:{_TEXT};text-align:right;
     flex-shrink:0;font-weight:500;line-height:1.3;">{_e(label)}</div>
-  <div style="flex:1;background:{_SURFACE};border-radius:8px;height:38px;
+  <div style="flex:1;background:{_SURFACE};border-radius:8px;height:50px;
     overflow:hidden;position:relative;border:1px solid {_BORDER};">
     <div style="width:{pct}%;background:linear-gradient(90deg,{_MAIN},{_ACCENT});
       height:100%;border-radius:8px;transition:width 0s;"></div>
   </div>
-  <div style="width:90px;font-size:18px;font-weight:900;color:{_ACCENT};
+  <div style="width:110px;font-size:24px;font-weight:900;color:{_ACCENT};
     flex-shrink:0;">{_e(val)}{_e(unit)}</div>
 </div>""")
 
     return _base(f"""
 {_header(chart.get("title",""), chart.get("subtitle",""))}
 <div style="flex:1;display:flex;flex-direction:column;justify-content:center;
-  gap:18px;padding:20px 52px;">
+  gap:22px;padding:20px 52px;">
   {"".join(rows)}
 </div>
 {_impact_footer("", caption)}""")
@@ -282,13 +282,13 @@ def _html_comparison(chart: dict) -> str:
         rows    = "".join(
             f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">'
             f'<div style="width:8px;height:8px;border-radius:50%;background:{dot_c};flex-shrink:0;"></div>'
-            f'<span style="font-size:14px;color:{txt_c};line-height:1.4;">{_e(it)}</span></div>'
+            f'<span style="font-size:18px;color:{txt_c};line-height:1.45;">{_e(it)}</span></div>'
             for it in items[:4]
         )
         return f"""
 <div style="flex:1;background:{bg};border:2px solid {border};border-radius:16px;
   padding:26px 28px{shadow};">
-  <div style="font-size:19px;font-weight:800;color:{lbl_c};margin-bottom:14px;
+  <div style="font-size:23px;font-weight:800;color:{lbl_c};margin-bottom:14px;
     text-align:center;">{_e(label)}</div>
   <div style="height:1px;background:{_BORDER};margin-bottom:16px;"></div>
   {rows}
@@ -321,8 +321,8 @@ def _html_flow(chart: dict) -> str:
     n       = len(steps)
 
     # ステップ数に応じてサイズ調整（スマホ表示前提で大きめ）
-    chip_fs = "19px" if n <= 3 else "17px"
-    text_fs = "23px" if n <= 3 else "21px"
+    chip_fs = "22px" if n <= 3 else "19px"
+    text_fs = "26px" if n <= 3 else "23px"
     pad     = "16px 24px" if n <= 3 else "12px 22px"
 
     rows = []
@@ -340,7 +340,7 @@ def _html_flow(chart: dict) -> str:
   <div style="width:150px;flex-shrink:0;display:flex;flex-direction:column;
     align-items:center;justify-content:center;background:{chip_bg};
     border-radius:12px;padding:8px 6px;">
-    <div style="font-size:12px;font-weight:700;color:{chip_fg};opacity:0.65;
+    <div style="font-size:14px;font-weight:700;color:{chip_fg};opacity:0.65;
       letter-spacing:2px;line-height:1;">{i+1:02d}</div>
     <div style="font-size:{chip_fs};font-weight:900;color:{chip_fg};
       letter-spacing:1px;margin-top:3px;">{_e(label)}</div>
@@ -376,11 +376,11 @@ def _html_list(chart: dict) -> str:
     caption = chart.get("caption", "")
     n       = len(items)
 
-    head_fs = "29px" if n <= 3 else "23px"
-    text_fs = "20px" if n <= 3 else "16px"
+    head_fs = "32px" if n <= 3 else "25px"
+    text_fs = "22px" if n <= 3 else "17px"
     num_sz  = "56px" if n <= 3 else "50px"
     num_fs  = "26px" if n <= 3 else "23px"
-    row_pad = "18px 26px" if n <= 3 else "12px 24px"
+    row_pad = "16px 26px" if n <= 3 else "9px 22px"
     pic_sz  = 40 if n <= 3 else 36
 
     rows = []
@@ -402,14 +402,14 @@ def _html_list(chart: dict) -> str:
     <div style="font-size:{head_fs};font-weight:800;color:{_TEXT};
       line-height:1.3;margin-bottom:5px;">{_hl(head)}</div>
     <div style="font-size:{text_fs};color:{_MUTED};font-weight:500;
-      line-height:1.5;">{_hl(text)}</div>
+      line-height:1.4;">{_hl(text)}</div>
   </div>
 </div>""")
 
     return _base(f"""
 {_header(chart.get("title",""), chart.get("subtitle",""))}
 <div style="flex:1;display:flex;flex-direction:column;justify-content:center;
-  gap:16px;padding:4px 52px;">
+  gap:10px;padding:4px 52px;">
   {"".join(rows)}
 </div>
 {_impact_footer(impact, caption)}""")
@@ -432,11 +432,11 @@ def _html_compare_flow(chart: dict) -> str:
         label = side.get("label", "")
         items = [str(x) for x in (side.get("items", []) or [])][:5]
         n     = len(items)
-        fs    = "20px" if n <= 4 else "18px"
-        pad   = "13px 18px" if n <= 4 else "10px 16px"
+        fs    = "21px" if n <= 4 else "19px"
+        pad   = "8px 16px" if n <= 4 else "7px 14px"
         rows  = []
         for i, it in enumerate(items):
-            sep = (f'<div style="text-align:center;color:{color};font-size:17px;'
+            sep = (f'<div style="text-align:center;color:{color};font-size:20px;'
                    f'line-height:1;margin:-2px 0;">{arrow}</div>') if i else ""
             rows.append(sep + f"""
 <div style="background:#ffffff;border:1px solid {tint_it};border-radius:11px;
@@ -444,12 +444,12 @@ def _html_compare_flow(chart: dict) -> str:
   {_hl(it)}</div>""")
         return f"""
 <div style="flex:1;background:{tint_bg};border:2px solid {tint_bd};border-radius:16px;
-  padding:18px 20px;display:flex;flex-direction:column;">
-  <div style="background:{color};color:#ffffff;font-size:18px;font-weight:900;
-    border-radius:9px;padding:8px 16px;text-align:center;margin-bottom:14px;
+  padding:12px 16px;display:flex;flex-direction:column;">
+  <div style="background:{color};color:#ffffff;font-size:21px;font-weight:900;
+    border-radius:9px;padding:8px 16px;text-align:center;margin-bottom:8px;
     flex-shrink:0;">{_e(label)}</div>
   <div style="flex:1;display:flex;flex-direction:column;justify-content:center;
-    gap:7px;">{"".join(rows)}</div>
+    gap:4px;">{"".join(rows)}</div>
 </div>"""
 
     return _base(f"""
@@ -481,9 +481,9 @@ def _html_matrix(chart: dict) -> str:
     palette = [_MAIN, "#0369a1", _ACCENT]
     ncol    = len(groups)
     max_it  = max((len(g.get("items") or []) for g in groups), default=0)
-    head_fs = "17px" if max_it <= 4 else "15px"
-    text_fs = "13.5px" if max_it <= 4 else "12.5px"
-    pad     = "10px 13px" if max_it <= 4 else "8px 12px"
+    head_fs = "20px" if max_it <= 4 else "17px"
+    text_fs = "15.5px" if max_it <= 4 else "14px"
+    pad     = "8px 12px" if max_it <= 4 else "6px 11px"
 
     cols = []
     for gi, g in enumerate(groups):
@@ -506,12 +506,12 @@ def _html_matrix(chart: dict) -> str:
 </div>""")
         cols.append(f"""
 <div style="flex:1;display:flex;flex-direction:column;min-width:0;">
-  <div style="background:{color};color:#ffffff;font-size:17px;font-weight:900;
+  <div style="background:{color};color:#ffffff;font-size:20px;font-weight:900;
     border-radius:9px 9px 0 0;padding:9px 14px;text-align:center;
     flex-shrink:0;">{_e(g.get("label",""))}</div>
   <div style="flex:1;background:{_CARD};border:1px solid {_BORDER};border-top:none;
-    border-radius:0 0 9px 9px;padding:11px;display:flex;flex-direction:column;
-    justify-content:space-evenly;gap:7px;">{"".join(rows)}</div>
+    border-radius:0 0 9px 9px;padding:8px;display:flex;flex-direction:column;
+    justify-content:space-evenly;gap:5px;">{"".join(rows)}</div>
 </div>""")
 
     return _base(f"""
